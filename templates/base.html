@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>{% block title %}{% endblock %}</title>
+        <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='site.css')}}" />
+    </head>
+    <body>
+        <div class="navbar">
+            <a href="{{ url_for('home') }}" class="navbar-brand">Home</a>
+            <a href="{{ url_for('livefeed_page') }}" class="navbar-item">Live Feed</a>
+            <a href="{{ url_for('recordings') }}" class="navbar-item">Recordings</a>
+            <a href="{{ url_for('employees') }}" class="navbar-item">Employees</a>
+            <a href="{{ url_for('account') }}" class="navbar-item">Account Settings</a>
+        </div>
+        <div class="body-content">
+            {% block content %}
+            {% endblock %}
+            <hr/>
+        </div>
+    </body>
+</html>
