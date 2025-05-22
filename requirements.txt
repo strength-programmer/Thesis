@@ -8,3 +8,7 @@ pillow
 ftfy
 einops
 timm
+psycopg2-binary
+python-dotenv
+SQLAlchemy
+Flask-SQLAlchemy

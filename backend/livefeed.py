@@ -280,10 +280,9 @@ class VideoManager:
             
     def setup_recording(self):
         """Setup video recording"""
-        # timestamp = datetime.datetime.now().strftime("%Y::%m::%d / %I::%M::%S")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = os.path.join("recordings", f"recording_{timestamp}.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Changed from 'mp4v' to 'avc1' for better browser compatibility
         self.writer = cv2.VideoWriter(
             output_path,
             fourcc,
