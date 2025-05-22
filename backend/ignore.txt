@@ -1,0 +1,433 @@
+import argparse
+import os
+import time
+import json
+
+import numpy as np
+import cv2
+import torch
+import torch.nn.functional as F
+from PIL import Image
+from torchvision.transforms import v2
+import mediapipe as mp
+import matplotlib.pyplot as plt
+
+# ----------------------
+# Argument Parsing & Config
+# ----------------------
+def parse_args():
+    parser = argparse.ArgumentParser(description="Combined RT-DETR person detection with action recognition")
+    parser.add_argument("--REC", action='store_true', help="record stream")
+    parser.add_argument("-weights", type=str, default=r"C:\\Users\\buanh\\Documents\\VSCODE\\thesis\\livefeed\\weights\\avak_b16.pt", help="path to action recognition pretrained weights")
+    parser.add_argument("-rate", type=int, default=8, help="sampling rate") #rate #2
+    parser.add_argument("-act_thresh", type=float, default=0.20, help="action confidence threshold") #default 0.25
+    parser.add_argument("-det_thresh", type=float, default=0.6, help="person detection confidence threshold") #default 0.7
+    parser.add_argument("-nms_thresh", type=float, default=0.75, help="NMS threshold for person detection") #default 0.75
+    parser.add_argument("-act", type=lambda s: s.split(","), help="Comma-separated list of actions")
+    parser.add_argument("-color", type=str, default='green', help="color to plot predictions")
+    parser.add_argument("-font", type=float, default=0.7, help="font size")
+    parser.add_argument("-line", type=int, default=2, help="line thickness")
+    parser.add_argument("-delay", type=int, default=60, help="frame delay amount") #default 30
+    parser.add_argument("-fps", type=int, default=10, help="target frames per second")
+    parser.add_argument("-det_freq", type=int, default=6, help="detection frequency (every N frames)")
+    # Hardcode the video file path
+    parser.add_argument("-F", type=str, default="COFFEESHOP_1.mp4", help="file path for video input")
+    parser.add_argument("-roi", type=str, default=None, help="Path to ROI coordinates JSON file (format: [[x1, y1], [x2, y2]])")
+    return parser.parse_args()
+
+args = parse_args()
+
+# Always use all actions from ava_classes.json if -act is not provided
+if args.act is None:
+    with open('ava_classes.json', 'r') as f:
+        args.act = json.load(f)
+else:
+    args.act = [s.replace('_', ' ') for s in args.act]
+
+COLORS = {
+    "red": (0, 0, 255),
+    "green": (0, 255, 0),
+    "blue": (255, 0, 0),
+    "yellow": (0, 255, 255),
+    "cyan": (255, 255, 0),
+    "magenta": (255, 0, 255),
+    "white": (255, 255, 255),
+    "black": (0, 0, 0),
+}
+color = COLORS.get(args.color, (0, 255, 0))
+font = args.font
+thickness = args.line
+
+# ----------------------
+# Device & Torch Setup
+# ----------------------
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.benchmark = True
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+# ----------------------
+# Display Window Setup
+# ----------------------
+display_width, display_height = 1280, 720  # Fixed resolution # Set fixed playback resolution (e.g., 1280x720)
+outsize = (display_height, display_width)
+out_frame = np.full((outsize[0], outsize[1], 3), 0., dtype=np.uint8)
+cv2.namedWindow('Detection + Action Recognition', cv2.WINDOW_NORMAL)
+cv2.resizeWindow('Detection + Action Recognition', display_width, display_height)
+# Lock the window size so the user cannot resize it
+cv2.setWindowProperty('Detection + Action Recognition', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+cv2.setWindowProperty('Detection + Action Recognition', cv2.WND_PROP_ASPECT_RATIO, cv2.WINDOW_KEEPRATIO)
+cv2.setWindowProperty('Detection + Action Recognition', cv2.WND_PROP_AUTOSIZE, 1)
+
+# ----------------------
+# Load RT-DETR Person Detector
+# ----------------------
+from transformers import RTDetrV2ForObjectDetection, RTDetrImageProcessor
+print("Loading RT-DETR model...")
+model_name = "PekingU/rtdetr_v2_r18vd"
+image_processor = RTDetrImageProcessor.from_pretrained(model_name)
+rt_detr_model = RTDetrV2ForObjectDetection.from_pretrained(model_name)
+
+use_half_precision = device.type == "cuda" and torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 7
+if use_half_precision:
+    rt_detr_model = rt_detr_model.half()
+    print("Using half precision (FP16) for faster inference")
+rt_detr_model = rt_detr_model.to(device).eval()
+
+# ----------------------
+# Load Action Recognition Model
+# ----------------------
+from hb import get_hb
+print("Loading Action Recognition model...")
+action_model = get_hb(size='b', pretrain=None, det_token_num=20, text_lora=True, num_frames=9)['hb']
+action_model.load_state_dict(torch.load(args.weights, weights_only=True), strict=False)
+action_model.to(device).eval()
+
+captions = args.act
+text_embeds = F.normalize(action_model.encode_text(captions), dim=-1)
+
+imgsize = (240, 320)
+tfs = v2.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+
+class PostProcessActions:
+    def __call__(self, action_probs, threshold=0.25):
+        # Keep everything on GPU until numpy conversion is needed
+        if len(action_probs.shape) == 3:
+            probs = action_probs[0, 0]
+        elif len(action_probs.shape) == 2:
+            probs = action_probs[0]
+        else:
+            probs = action_probs
+        mask = probs > threshold
+        indices = torch.nonzero(mask).flatten()
+        actions = [(int(i), float(probs[i].item())) for i in indices]
+        return sorted(actions, key=lambda x: x[1], reverse=True)
+postprocess = PostProcessActions()
+
+# ----------------------
+# Video Recording Setup
+# ----------------------
+writer = None
+if args.REC:
+    writer = cv2.VideoWriter('detection_action_recognition.mp4', cv2.VideoWriter_fourcc(*'MJPG'), args.fps, (display_width, display_height))
+
+# ----------------------
+# MediaPipe Pose Segmentation Setup
+# ----------------------
+# mp_pose = mp.solutions.pose
+# mp_drawing = mp.solutions.drawing_utils
+# pose = mp_pose.Pose(
+#     static_image_mode=False,
+#     model_complexity=1,  # Lower complexity for faster inference
+#     enable_segmentation=True,
+#     min_detection_confidence=0.5,
+#     min_tracking_confidence=0.5
+# )
+
+# # State variables for segmentation toggles
+# segmentation_on = True
+# inverse_segmentation = True
+# highlight_on = False
+# frame_skip = 1
+# mp_frame_count = 0
+# last_mask = None
+
+activity_recognition_on = True  # Add a toggle for human activity recognition
+
+def detect_persons(delayed_frame):
+    rgb_frame = cv2.cvtColor(delayed_frame, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(rgb_frame)
+    inputs = image_processor(images=pil_image, return_tensors="pt")
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    if use_half_precision:
+        inputs = {k: v.half() if v.dtype == torch.float32 else v for k, v in inputs.items()}
+    with torch.no_grad():
+        outputs = rt_detr_model(**inputs)
+    target_sizes = torch.tensor([(pil_image.height, pil_image.width)]).to(device)
+    results = image_processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=args.det_thresh)[0]
+    results = {k: v.cpu() for k, v in results.items()}
+    person_boxes_xyxy, person_scores = [], []
+    for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
+        if rt_detr_model.config.id2label[label.item()].lower() == "person":
+            person_scores.append(score.item())
+            person_boxes_xyxy.append([int(i) for i in box.tolist()])
+    person_detections = []
+    if person_boxes_xyxy:
+        indices = cv2.dnn.NMSBoxes(person_boxes_xyxy, person_scores, args.det_thresh, args.nms_thresh)
+        for idx in indices:
+            idx = idx[0] if isinstance(idx, np.ndarray) else idx
+            person_detections.append({"score": person_scores[idx], "box": person_boxes_xyxy[idx]})
+    return person_detections
+
+# ----------------------
+# ROI Restriction Setup
+# ----------------------
+# Define your ROI coordinates here (x1, y1) = top-left, (x2, y2) = bottom-right
+ROI_TOPLEFT = (0, 452)      # (x1, y1)
+ROI_BOTTOMRIGHT = (1916, 1075)  # (x2, y2)
+
+# Optionally, allow user to override via command line or config in the future
+
+# Remove old ROI rectangle logic, use dynamic line instead
+# Remove ROI_TOPLEFT, ROI_BOTTOMRIGHT, box_intersects_roi, and ROI file loading logic
+
+def get_line_from_user(frame):
+    """Show frame in matplotlib and let user click two points to define a line segment."""
+    fig, ax = plt.subplots()
+    ax.imshow(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    ax.set_title('Click two points to define the ROI line segment')
+    points = []
+    def onclick(event):
+        if event.xdata is not None and event.ydata is not None:
+            points.append((int(event.xdata), int(event.ydata)))
+            ax.plot(event.xdata, event.ydata, 'ro')
+            fig.canvas.draw()
+            if len(points) == 2:
+                fig.canvas.mpl_disconnect(cid)
+                plt.close(fig)
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    plt.show()
+    if len(points) != 2:
+        raise RuntimeError('You must click exactly two points!')
+    return points[0], points[1]
+
+# ----------------------
+# Main Loop
+# ----------------------
+print("Starting video stream...")
+video_source = args.F if args.F else 0
+cap = cv2.VideoCapture(video_source)
+if not cap.isOpened():
+    raise RuntimeError(f"Cannot open video source: {video_source}")
+
+# --- Get ROI line from user on first frame ---
+# ret, first_frame = cap.read()
+# if not ret or first_frame is None:
+#     raise RuntimeError("Cannot read first frame for ROI selection.")
+# first_frame = cv2.flip(first_frame, 1)
+# first_frame = cv2.resize(first_frame, (display_width, display_height))
+# roi_line_p1, roi_line_p2 = get_line_from_user(first_frame)
+# print(f"ROI line: {roi_line_p1} to {roi_line_p2}")
+
+# Use fixed coordinates instead of dynamic user input
+roi_line_p1 = (7, 299)
+roi_line_p2 = (1253, 675)
+print(f"ROI line: {roi_line_p1} to {roi_line_p2}")
+
+# Rewind video to start after ROI selection
+cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+# Initialize buffers and counters
+buffer, plotbuffer, delay_buffer = [], [], []
+required_frames = 9 #9
+fps_history, last_person_detections = [], []
+frame_count, start_time, detection_time, init = 0, time.time(), 0, 0
+
+# Helper: check if a point is on the 'active' side of the line
+# We'll use the sign of the cross product to determine the side
+# For this example, we define the 'active' side as the side where the cross product is positive
+
+def is_on_active_side(pt, line_p1, line_p2):
+    x, y = pt
+    x1, y1 = line_p1
+    x2, y2 = line_p2
+    # Vector from p1 to p2
+    dx, dy = x2 - x1, y2 - y1
+    # Vector from p1 to pt
+    dxp, dyp = x - x1, y - y1
+    # Cross product
+    cross = dx * dyp - dy * dxp
+    return cross > 0  # You can flip the sign if you want the other side
+
+try:
+    while True:
+        frame_start_time = time.time()
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            print("Error: Failed to capture image")
+            break
+        frame_count += 1
+        current_time = time.time()
+        if frame_count % 10 == 0:
+            fps = 10 / (current_time - start_time) #10
+            fps_history.append(fps)
+            if len(fps_history) > 10:
+                fps_history.pop(0)
+            start_time = current_time
+        avg_fps = sum(fps_history) / len(fps_history) if fps_history else 0
+        frame = cv2.flip(frame, 1)
+        frame = cv2.resize(frame, (display_width, display_height))
+
+        # --- MediaPipe Segmentation Overlay ---
+        display_frame = frame.copy()
+        #mp_frame_count += 1
+        # if segmentation_on:
+        #     # Resize for faster processing
+        #     small_frame = cv2.resize(frame, (320, 240))
+        #     rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        #     if mp_frame_count % frame_skip == 0:
+        #         results = pose.process(rgb_frame)
+        #         last_mask = results.segmentation_mask if results.segmentation_mask is not None else last_mask
+        #     mask = last_mask
+        #     if mask is not None:
+        #         if inverse_segmentation:
+        #             mask = 1.0 - mask
+        #         # Resize mask back to display size
+        #         mask = cv2.resize(mask, (display_frame.shape[1], display_frame.shape[0]))
+        #         condition = mask > 0.7
+        #         alpha = 0.5  # Opacity for blending
+        #         if highlight_on:
+        #             fg_color = (0, 0, 255)    # Red for person (BGR)
+        #             bg_color = (0, 255, 0)    # Green for background (BGR)
+        #             fg_image = np.zeros(display_frame.shape, dtype=np.uint8)
+        #             fg_image[:] = fg_color
+        #             bg_image = np.zeros(display_frame.shape, dtype=np.uint8)
+        #             bg_image[:] = bg_color
+        #             display_frame = np.where(
+        #                 condition[..., None],
+        #                 (alpha * fg_image + (1 - alpha) * display_frame).astype(np.uint8),
+        #                 (alpha * bg_image + (1 - alpha) * display_frame).astype(np.uint8)
+        #             )
+        #         else:
+        #             bg_color = (0, 0, 240)  # Light yellow
+        #             bg_image = np.zeros(display_frame.shape, dtype=np.uint8)
+        #             bg_image[:] = bg_color
+        #             display_frame = np.where(
+        #                 condition[..., None],
+        #                 display_frame,
+        #                 (alpha * bg_image + (1 - alpha) * display_frame).astype(np.uint8)
+        #             )
+        # --- End MediaPipe Segmentation Overlay ---
+
+        delay_buffer.append(display_frame.copy())
+        if len(delay_buffer) > args.delay + 20: #10
+            delayed_frame = delay_buffer.pop(0)
+            person_detections = []
+            if frame_count % args.det_freq == 0:
+                detection_start = time.time()
+                person_detections = detect_persons(delayed_frame)
+                last_person_detections = person_detections
+                detection_time = time.time() - detection_start
+            else:
+                person_detections = last_person_detections
+            plotbuffer.append(delayed_frame.transpose(2, 0, 1))
+            delayed_frame_resized = cv2.resize(delayed_frame, (imgsize[1], imgsize[0]), interpolation=cv2.INTER_NEAREST)
+            color_image = delayed_frame_resized.transpose(2, 0, 1)
+            buffer.append(color_image)
+            if len(buffer) > 2 * required_frames:
+                buffer.pop(0)
+            out_frame = delayed_frame.copy()
+            person_actions = {}
+            # Filter detections to those on the active side of the ROI line for action recognition
+            persons_in_roi = []
+            for p in person_detections:
+                box = p["box"]
+                cx = (box[0] + box[2]) // 2
+                cy = (box[1] + box[3]) // 2
+                if is_on_active_side((cx, cy), roi_line_p1, roi_line_p2):
+                    persons_in_roi.append(p)
+            # Remove fast-forwarding/skip logic: always use the latest N frames for action recognition
+            if activity_recognition_on and len(buffer) >= required_frames:
+                try:
+                    frames_to_use = buffer[-required_frames:]
+                    clip_torch = torch.from_numpy(np.array(frames_to_use)).to(device) / 255
+                    clip_torch = tfs(clip_torch)
+                    for i, person in enumerate(persons_in_roi):
+                        with torch.no_grad():
+                            features = action_model.encode_vision(clip_torch.unsqueeze(0))
+                            action_probs = F.normalize(features['pred_logits'], dim=-1) @ text_embeds.T
+                            actions = postprocess(action_probs, threshold=args.act_thresh)
+                            # Use the index in the original person_detections list for consistent drawing
+                            orig_idx = person_detections.index(person)
+                            person_actions[orig_idx] = actions
+                except Exception as e:
+                    print(f"Error in action recognition: {e}")
+            elif not activity_recognition_on:
+                person_actions = {}
+            else:
+                print(f"Waiting for frames: have {len(buffer)}, need {required_frames}")
+            # Draw ROI line for visualization
+            cv2.line(out_frame, roi_line_p1, roi_line_p2, (0, 255, 255), 2)
+            person_count = 0
+            roi_id = 1  # Start ROI ID counter
+            for i, person in enumerate(person_detections):
+                box, score = person["box"], person["score"]
+                cv2.rectangle(out_frame, (box[0], box[1]), (box[2], box[3]), color, thickness)
+                label_text = f"Person: {score:.2f}"
+                cx = (box[0] + box[2]) // 2
+                cy = (box[1] + box[3]) // 2
+                if is_on_active_side((cx, cy), roi_line_p1, roi_line_p2):
+                    label_text += f" | ROI: employeeID:[{roi_id}]"
+                    roi_id += 1
+                    person_count += 1
+                cv2.putText(out_frame, label_text, (box[0], box[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, font, color, thickness)
+                if activity_recognition_on and i in person_actions and person_actions[i]:
+                    y_offset = 25
+                    for action_idx, confidence in person_actions[i]:
+                        action_text = f"{captions[action_idx]}: {confidence:.2f}"
+                        cv2.putText(out_frame, action_text, (box[0], box[1] + y_offset), cv2.FONT_HERSHEY_SIMPLEX, font, color, thickness)
+                        y_offset += 25
+            # Show person count on frame (top right, blue)
+            cv2.putText(out_frame, f"Total Persons: {len(person_detections)}", (display_width - 320, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 0, 0), 3)
+            # Show persons in ROI (bottom left, yellow)
+            cv2.putText(out_frame, f"Persons in ROI: {person_count}", (10, display_height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+            cv2.putText(out_frame, f"FPS: {avg_fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, font, (0, 0, 255), thickness)
+            # Show annotated output (with detection, action, ROI line)
+            cv2.imshow('Detection + Action Recognition', out_frame)
+            # Show raw output (no detection, no overlays, just the original frame)
+            cv2.imshow('Raw Output', frame)
+            if args.REC and writer:
+                writer.write(out_frame)
+            init += 1
+            if frame_count % 50 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        # --- End of frame processing ---
+        # Limit playback to target FPS (steady, no frame skipping)
+        elapsed = time.time() - frame_start_time
+        delay = max(1, int((1.0 / args.fps - elapsed) * 1000))
+        key = cv2.waitKey(delay) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('i'):
+            inverse_segmentation = not inverse_segmentation
+        elif key == ord('o'):
+            highlight_on = not highlight_on
+        elif key == ord('s'):
+            segmentation_on = not segmentation_on
+        elif key == ord('n') or key == ord('N'):
+            activity_recognition_on = not activity_recognition_on
+            print(f"Human activity recognition toggled to: {activity_recognition_on}")
+        current_fps = 1.0 / (time.time() - frame_start_time)
+        print(f'fps = {current_fps:.2f}, target = {args.fps}')
+except Exception as e:
+    print(f"Error occurred: {e}")
+    import traceback
+    traceback.print_exc()
+finally:
+    cap.release()
+    cv2.destroyAllWindows()
+    if args.REC and writer:
+        writer.release()
+    print("Cleanup complete.")
+

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}
+Recordings
+{% endblock %}
+
+{% block content %}
+<h1>Recordings</h1>
+<p>View and manage your recorded videos here.</p>
+<ul id="recordingsList" style="list-style-type: none; padding: 0;"></ul>
+<script>
+function loadRecordings() {
+    fetch('/list_recordings').then(r => r.json()).then(data => {
+        const list = document.getElementById('recordingsList');
+        list.innerHTML = '';
+        if (data.files.length === 0) {
+            list.innerHTML = '<li style="color:#888;">No recordings found.</li>';
+        } else {
+            data.files.forEach(function(file) {
+                const li = document.createElement('li');
+                li.style.marginBottom = '10px';
+                const link = document.createElement('a');
+                link.href = '/recordings/' + encodeURIComponent(file);
+                link.textContent = file;
+                link.style.color = '#3498db';
+                link.style.textDecoration = 'underline';
+                link.target = '_blank';
+                li.appendChild(link);
+                list.appendChild(li);
+            });
+        }
+    });
+}
+document.addEventListener('DOMContentLoaded', loadRecordings);
+</script>
+{% endblock %}

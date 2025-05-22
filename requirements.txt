@@ -1,0 +1,10 @@
+flask
+transformers
+torch
+torchvision
+numpy
+opencv-python
+pillow
+ftfy
+einops
+timm
