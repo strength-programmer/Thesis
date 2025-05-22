@@ -5,239 +5,107 @@ Live Feed
 {% endblock %}
 
 {% block content %}
-<div class="container mt-4">
-    <h2 class="text-center mb-4">Live Feed</h2>
-    <div class="row">
-        <div class="col-md-8">
-            <div class="video-container">
-                <img src="{{ url_for('video_feed') }}" width="100%" alt="Live Feed">
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="controls p-4 bg-light rounded shadow-sm">
-                <h4 class="mb-4">Controls</h4>
-                
-                <!-- Activity Recognition Toggle -->
-                <div class="control-item mb-4">
-                    <label class="control-label">Human Activity Recognition</label>
-                    <div class="toggle-switch">
-                        <input type="checkbox" id="activityToggle" class="toggle-input">
-                        <label for="activityToggle" class="toggle-label"></label>
-                    </div>
-                </div>
-
-                <!-- Recording Button -->
-                <div class="control-item mb-4">
-                    <label class="control-label">Recording</label>
-                    <div class="record-button-container">
-                        <button id="recordingToggle" class="record-button">
-                            <span class="record-icon"></span>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Recording Status -->
-                <div id="recordingStatus" class="alert alert-danger" style="display: none;">
-                    <i class="fas fa-circle text-danger me-2"></i>
-                    Recording in progress...
-                </div>
-            </div>
-        </div>
+<h1>Live Feed</h1>
+<div class="container-feed">
+    <h2>Live Video Feed</h2>
+    <div style="display: flex; align-items: center; margin-bottom: 20px;">
+        <label style="margin-right: 10px; font-weight: bold;">Human Activity Recognition:</label>
+        <label class="switch">
+            <input type="checkbox" id="activityToggle">
+            <span class="slider round"></span>
+        </label>
+        <span id="activityStatus" style="margin-left: 10px; font-weight: bold; color: #3498db;">OFF</span>
+    </div>
+    <div style="display: flex; align-items: center; margin-bottom: 20px;">
+        <button id="recordBtn" style="background-color:#e74c3c;color:white;padding:8px 18px;border:none;border-radius:5px;font-weight:bold;cursor:pointer;transition:background 0.2s;">Record</button>
+        <span id="recordingStatus" style="margin-left: 10px; font-weight: bold; color: #3498db;">OFF</span>
+    </div>
+    <div class="video-placeholder">
+        <img src="{{ url_for('video_feed') }}" alt="Live Video Feed" style="max-width:100%; max-height:100%; display:block; margin:auto;" />
     </div>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Activity Recognition Toggle
-    const activityToggle = document.getElementById('activityToggle');
-    
-    // Check initial state
-    fetch('/activity_status')
-        .then(response => response.json())
-        .then(data => {
-            activityToggle.checked = data.active;
-        });
-    
-    activityToggle.addEventListener('change', function() {
-        fetch('/toggle_activity', {
-            method: 'POST',
-        })
-        .then(response => response.json())
-        .then(data => {
-            activityToggle.checked = data.active;
-        });
-    });
+function updateActivityUI(isOn) {
+    document.getElementById('activityToggle').checked = isOn;
+    document.getElementById('activityStatus').textContent = isOn ? 'ON' : 'OFF';
+    document.getElementById('activityStatus').style.color = isOn ? '#27ae60' : '#e74c3c';
+}
 
-    // Recording Toggle
-    const recordingToggle = document.getElementById('recordingToggle');
-    const recordingStatus = document.getElementById('recordingStatus');
-    
-    // Check initial recording state
-    fetch('/recording_status')
-        .then(response => response.json())
-        .then(data => {
-            recordingToggle.classList.toggle('recording', data.recording);
-            recordingStatus.style.display = data.recording ? 'block' : 'none';
-        });
-    
-    recordingToggle.addEventListener('click', function() {
-        fetch('/toggle_recording', {
-            method: 'POST',
-        })
-        .then(response => response.json())
-        .then(data => {
-            recordingToggle.classList.toggle('recording', data.recording);
-            recordingStatus.style.display = data.recording ? 'block' : 'none';
-        });
+function fetchActivityStatus() {
+    fetch('/activity_status').then(r => r.json()).then(data => {
+        updateActivityUI(data.active);
     });
+}
+
+function toggleActivityRecognition() {
+    fetch('/toggle_activity', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => updateActivityUI(data.active));
+}
+
+function updateRecordingUI(isRecording) {
+    document.getElementById('recordingStatus').textContent = isRecording ? 'ON' : 'OFF';
+    document.getElementById('recordingStatus').style.color = isRecording ? '#27ae60' : '#e74c3c';
+}
+
+function fetchRecordingStatus() {
+    fetch('/recording_status').then(r => r.json()).then(data => {
+        updateRecordingUI(data.recording);
+    });
+}
+
+function toggleRecording() {
+    fetch('/toggle_recording', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => updateRecordingUI(data.recording));
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    fetchActivityStatus();
+    fetchRecordingStatus();
+    document.getElementById('activityToggle').addEventListener('change', toggleActivityRecognition);
+    document.getElementById('recordBtn').addEventListener('click', toggleRecording);
 });
 </script>
 
 <style>
-/* Control Panel Styles */
-.controls {
-    background-color: #f8f9fa;
-    border-radius: 10px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.control-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 0;
-}
-
-.control-label {
-    font-weight: 500;
-    color: #333;
-    margin-bottom: 0;
-}
-
-/* Toggle Switch Styles */
-.toggle-switch {
+.switch {
     position: relative;
-    width: 60px;
-    height: 30px;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
 }
-
-.toggle-input {
+.switch input {
     display: none;
 }
-
-.toggle-label {
+.slider {
     position: absolute;
+    cursor: pointer;
     top: 0;
     left: 0;
-    width: 60px;
-    height: 30px;
-    border-radius: 15px;
-    background: #ccc;
-    cursor: pointer;
-    transition: 0.3s;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 24px;
 }
-
-.toggle-label:after {
-    content: '';
+.slider:before {
     position: absolute;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    top: 2px;
-    left: 2px;
-    background: white;
-    transition: 0.3s;
-}
-
-.toggle-input:checked + .toggle-label {
-    background: #28a745;
-}
-
-.toggle-input:checked + .toggle-label:after {
-    left: 32px;
-}
-
-/* Record Button Styles */
-.record-button-container {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
-
-.record-button {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: #dc3545;
-    border: none;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    position: relative;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-}
-
-.record-button:hover {
-    transform: scale(1.05);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-}
-
-.record-button.recording {
-    animation: pulse 1.5s infinite;
-}
-
-.record-icon {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 20px;
-    height: 20px;
-    background: white;
-    border-radius: 2px;
-}
-
-.record-button.recording .record-icon {
-    width: 20px;
-    height: 20px;
-    background: white;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
     border-radius: 50%;
 }
-
-@keyframes pulse {
-    0% {
-        box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4);
-    }
-    70% {
-        box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
-    }
-    100% {
-        box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
-    }
+input:checked + .slider {
+    background-color: #27ae60;
 }
-
-/* Video Container Styles */
-.video-container {
-    background: #000;
-    border-radius: 10px;
-    overflow: hidden;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-}
-
-/* Recording Status Alert */
-#recordingStatus {
-    margin-top: 20px;
-    text-align: center;
-    font-weight: 500;
-}
-
-#recordingStatus i {
-    animation: blink 1s infinite;
-}
-
-@keyframes blink {
-    50% {
-        opacity: 0.5;
-    }
+input:checked + .slider:before {
+    transform: translateX(26px);
 }
 </style>
 {% endblock %}
