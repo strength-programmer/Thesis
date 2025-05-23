@@ -16,9 +16,9 @@ __pycache__/
 instance/
 .webassets-cache
 
-# large files
-# Ignore all .mp4 files
-*.mp4
+# # large files
+# # Ignore all .mp4 files
+# *.mp4
 
-# Ignore all .pt files
-*.pt
+# # Ignore all .pt files
+# *.pt
