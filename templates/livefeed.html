@@ -28,18 +28,19 @@ Live Feed
 
                 <!-- Recording Button -->
                 <div class="control-item mb-4">
-                    <label class="control-label">Recording</label>
+                    <label class="control-label">Recording (Dual Output)</label>
                     <div class="record-button-container">
                         <button id="recordingToggle" class="record-button">
                             <span class="record-icon"></span>
                         </button>
                     </div>
+                    <small class="text-muted">Records both original and segmented versions simultaneously</small>
                 </div>
 
                 <!-- Recording Status -->
-                <div id="recordingStatus" class="alert alert-danger" style="display: none;">
-                    <i class="fas fa-circle text-danger me-2"></i>
-                    Recording in progress...
+                <div id="recordingStatus" class="alert alert-warning" style="display: none;">
+                    <i class="fas fa-circle text-warning me-2"></i>
+                    Recording in progress (creating dual outputs)...
                 </div>
             </div>
         </div>
@@ -68,7 +69,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Recording Toggle
+    // Recording Toggle (Dual Output)
     const recordingToggle = document.getElementById('recordingToggle');
     const recordingStatus = document.getElementById('recordingStatus');
     
@@ -76,13 +77,15 @@ document.addEventListener('DOMContentLoaded', function() {
     fetch('/recording_status')
         .then(response => response.json())
         .then(data => {
-            recordingToggle.classList.toggle('recording', data.recording);
-            recordingStatus.style.display = data.recording ? 'block' : 'none';
+            const isRecording = data.original || data.segmented;
+            recordingToggle.classList.toggle('recording', isRecording);
+            recordingStatus.style.display = isRecording ? 'block' : 'none';
         });
     
+    // Recording Toggle - starts/stops both recordings simultaneously
     recordingToggle.addEventListener('click', function() {
-        fetch('/toggle_recording', {
-            method: 'POST',
+        fetch('/toggle_dual_recording', {
+            method: 'POST'
         })
         .then(response => response.json())
         .then(data => {

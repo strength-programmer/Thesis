@@ -6,13 +6,16 @@
         <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='site.css')}}" />
     </head>
     <body>
+        {% if session.get('logged_in') %}
         <div class="navbar">
             <a href="{{ url_for('home') }}" class="navbar-brand">Home</a>
             <a href="{{ url_for('livefeed_page') }}" class="navbar-item">Live Feed</a>
             <a href="{{ url_for('recordings') }}" class="navbar-item">Recordings</a>
             <a href="{{ url_for('employees') }}" class="navbar-item">Employees</a>
             <a href="{{ url_for('account') }}" class="navbar-item">Account Settings</a>
+            <a href="{{ url_for('logout') }}" class="navbar-item logout">Logout</a>
         </div>
+        {% endif %}
         <div class="body-content">
             {% block content %}
             {% endblock %}

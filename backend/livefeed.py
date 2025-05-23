@@ -4,6 +4,7 @@ import time
 import json
 import datetime
 import threading
+import traceback
 from typing import List, Dict, Tuple, Optional
 
 import numpy as np
@@ -273,31 +274,167 @@ class VideoManager:
         self.video_thread_started = False
         self.video_thread_lock = threading.Lock()
         
-        # Recording setup
-        self.writer = None
+        # Recording setup - support for two types
+        self.original_writer = None
+        self.segmented_writer = None
+        self.original_recording_active = False
+        self.segmented_recording_active = False
         if self.config.args.REC:
             self.setup_recording()
             
-    def setup_recording(self):
-        """Setup video recording"""
-        # timestamp = datetime.datetime.now().strftime("%Y::%m::%d / %I::%M::%S")
+    def setup_recording(self, recording_type="original"):
+        """Setup video recording for either original or segmented recording"""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join("recordings", f"recording_{timestamp}.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.writer = cv2.VideoWriter(
-            output_path,
-            fourcc,
-            self.config.args.fps,
-            (self.config.display_width, self.config.display_height)
-        )
-        print(f"Recording started: {output_path}")
+        # Create absolute path to recordings directory
+        recordings_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "recordings")
+        if not os.path.exists(recordings_dir):
+            os.makedirs(recordings_dir)
         
-    def stop_recording(self):
-        """Stop video recording"""
-        if self.writer is not None:
-            self.writer.release()
-            self.writer = None
-            print("Recording stopped")
+        # Initially save both recordings in the main recordings folder
+        # The segmented recording will be post-processed and moved later
+        if recording_type == "segmented":
+            output_path = os.path.join(recordings_dir, f"raw_segmented_recording_{timestamp}.mp4")
+        else:
+            output_path = os.path.join(recordings_dir, f"original_recording_{timestamp}.mp4")
+        
+        # Try different MP4-compatible codecs in order of performance and browser compatibility
+        mp4_codecs = ['MJPG', 'mp4v', 'X264', 'avc1']  # MJPG is fastest for real-time recording
+        
+        success = False
+        writer = None
+        
+        for codec in mp4_codecs:
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                writer = cv2.VideoWriter(
+                    output_path,
+                    fourcc,
+                    max(5, min(self.config.args.fps, 30)),  # Limit FPS to 5-30 for better compatibility
+                    (self.config.display_width, self.config.display_height)
+                )
+                
+                # Test if the writer is working by writing a test frame
+                if writer.isOpened():
+                    test_frame = np.zeros((self.config.display_height, self.config.display_width, 3), dtype=np.uint8)
+                    test_frame.fill(50)  # Gray test frame
+                    writer.write(test_frame)
+                    print(f"{recording_type.capitalize()} recording started with {codec} codec: {output_path}")
+                    
+                    # Assign to appropriate writer
+                    if recording_type == "segmented":
+                        self.segmented_writer = writer
+                        self.current_segmented_recording_path = output_path
+                        self.segmented_recording_active = True
+                    else:
+                        self.original_writer = writer
+                        self.current_original_recording_path = output_path
+                        self.original_recording_active = True
+                    
+                    success = True
+                    break
+                else:
+                    if writer:
+                        writer.release()
+                    print(f"Failed to initialize {recording_type} recording with {codec} codec, trying next...")
+                    
+            except Exception as e:
+                print(f"Error with {codec} codec for {recording_type} recording: {e}")
+                if writer:
+                    writer.release()
+                continue
+        
+        if not success:
+            print(f"ERROR: Could not initialize {recording_type} video writer with any MP4 codec!")
+            if recording_type == "segmented":
+                self.segmented_writer = None
+            else:
+                self.original_writer = None
+
+    def stop_recording(self, recording_type="original"):
+        """Stop video recording for the specified type"""
+        if recording_type == "segmented":
+            if self.segmented_writer is not None:
+                self.segmented_writer.release()
+                self.segmented_writer = None
+                self.segmented_recording_active = False
+                if hasattr(self, 'current_segmented_recording_path'):
+                    print(f"Segmented recording stopped and saved: {self.current_segmented_recording_path}")
+                    # Verify the file was created and has content
+                    if os.path.exists(self.current_segmented_recording_path):
+                        file_size = os.path.getsize(self.current_segmented_recording_path)
+                        print(f"Segmented recording file size: {file_size} bytes")
+                        
+                        # Start post-processing in background thread
+                        threading.Thread(
+                            target=self._post_process_segmented_recording,
+                            args=(self.current_segmented_recording_path,),
+                            daemon=True
+                        ).start()
+                    else:
+                        print("ERROR: Segmented recording file was not created!")
+                else:
+                    print("Segmented recording stopped")
+        else:
+            if self.original_writer is not None:
+                self.original_writer.release()
+                self.original_writer = None
+                self.original_recording_active = False
+                if hasattr(self, 'current_original_recording_path'):
+                    print(f"Original recording stopped and saved: {self.current_original_recording_path}")
+                    # Verify the file was created and has content
+                    if os.path.exists(self.current_original_recording_path):
+                        file_size = os.path.getsize(self.current_original_recording_path)
+                        print(f"Original recording file size: {file_size} bytes")
+                    else:
+                        print("ERROR: Original recording file was not created!")
+                else:
+                    print("Original recording stopped")
+    
+    def _post_process_segmented_recording(self, raw_recording_path):
+        """Post-process the raw segmented recording using auto.py"""
+        try:
+            print(f"Starting post-processing of: {raw_recording_path}")
+            
+            # Create segmented recordings directory
+            recordings_dir = os.path.dirname(raw_recording_path)
+            segmented_dir = os.path.join(recordings_dir, "segmented_recordings")
+            if not os.path.exists(segmented_dir):
+                os.makedirs(segmented_dir)
+            
+            # Generate output path for processed video
+            filename = os.path.basename(raw_recording_path)
+            processed_filename = filename.replace("raw_segmented_recording_", "segmented_recording_")
+            processed_path = os.path.join(segmented_dir, processed_filename)
+            
+            # Import and run auto.py processing
+            import sys
+            sys.path.append(os.path.join(os.path.dirname(__file__), 'postprocess'))
+            from auto import auto_annotate_video_with_models
+            
+            # Run the auto annotation
+            auto_annotate_video_with_models(
+                video_path=raw_recording_path,
+                output_video_path=processed_path,
+                det_model="PekingU/rtdetr_v2_r18vd",
+                sam_model_path="mobile_sam.pt",  # Changed from sam2.1_t.pt to mobile_sam.pt
+                device="cuda" if torch.cuda.is_available() else "cpu",
+                conf=0.55,
+                visualize=True,
+                use_sam=True,  # Will fallback to False if SAM model fails to load
+                iou_threshold=0.3
+            )
+            
+            # Remove the raw recording file after successful processing
+            if os.path.exists(processed_path):
+                os.remove(raw_recording_path)
+                print(f"Post-processing complete! Processed video saved at: {processed_path}")
+                print(f"Raw recording file removed: {raw_recording_path}")
+            else:
+                print(f"ERROR: Post-processing failed, processed file not found: {processed_path}")
+                
+        except Exception as e:
+            print(f"ERROR in post-processing: {e}")
+            traceback.print_exc()
             
     def process_frame(self, frame):
         """Process a single frame and return the annotated output"""
@@ -312,7 +449,7 @@ class VideoManager:
         
         # Process only if we have enough frames in the delay buffer
         if len(self.delay_buffer) <= self.config.args.delay + 20:
-            return None
+            return frame  # Return original frame if not enough delay buffer
             
         # Get delayed frame and process
         delayed_frame = self.delay_buffer.pop(0)
@@ -450,9 +587,29 @@ class VideoManager:
             self.config.thickness
         )
         
-        # Write frame to video if recording
-        if self.writer is not None:
-            self.writer.write(out_frame)
+        # Write frame to video if recording (optimized for dual recording)
+        recording_active = (self.original_writer is not None and self.original_recording_active) or \
+                          (self.segmented_writer is not None and self.segmented_recording_active)
+        
+        if recording_active:
+            # Only encode the frame once for both writers to save processing time
+            try:
+                if self.original_writer is not None and self.original_recording_active:
+                    self.original_writer.write(out_frame)
+                
+                if self.segmented_writer is not None and self.segmented_recording_active:
+                    # For segmented recording, you could apply additional processing here
+                    # For now, we'll record the same frame but you can modify this later
+                    self.segmented_writer.write(out_frame)
+                    
+                # Debug info every 30 frames when recording
+                if self.frame_count % 30 == 0:
+                    original_status = "ON" if self.original_recording_active else "OFF"
+                    segmented_status = "ON (will post-process)" if self.segmented_recording_active else "OFF"
+                    print(f"Recording status - Original: {original_status}, Segmented: {segmented_status}, Frame: {self.frame_count}")
+                    
+            except Exception as e:
+                print(f"Error writing video frame: {e}")
         
         # Periodic CUDA cache clearing
         if self.frame_count % 50 == 0 and torch.cuda.is_available():
@@ -483,15 +640,20 @@ class VideoManager:
                     
                 processed_frame = self.process_frame(frame)
                 if processed_frame is not None:
-                    ret, jpeg = cv2.imencode('.jpg', processed_frame)
-                    if ret:
-                        with self.video_thread_lock:
-                            self.latest_frame = jpeg.tobytes()
+                    # Encode to JPEG in a try-catch to prevent blocking
+                    try:
+                        ret, jpeg = cv2.imencode('.jpg', processed_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        if ret:
+                            with self.video_thread_lock:
+                                self.latest_frame = jpeg.tobytes()
+                    except Exception as e:
+                        print(f"Error encoding frame: {e}")
                 
                 # Limit playback to target FPS
                 elapsed = time.time() - frame_start_time
-                delay = max(1, int((1.0 / self.config.args.fps - elapsed) * 10000))
-                time.sleep(delay / 10000.0)
+                target_frame_time = 1.0 / self.config.args.fps
+                delay = max(0.001, target_frame_time - elapsed)  # Minimum 1ms delay
+                time.sleep(delay)
                 
         except Exception as e:
             print(f"Error occurred: {e}")
@@ -563,3 +725,32 @@ def toggle_activity_recognition():
 def get_activity_recognition_state():
     """Get current state of activity recognition"""
     return model_manager.get_activity_recognition_state()
+
+def start_recording(recording_type="original"):
+    """Start recording of the specified type"""
+    video_manager.setup_recording(recording_type)
+    return video_manager.original_recording_active if recording_type == "original" else video_manager.segmented_recording_active
+
+def stop_recording(recording_type="original"):
+    """Stop recording of the specified type"""
+    video_manager.stop_recording(recording_type)
+    return not (video_manager.original_recording_active if recording_type == "original" else video_manager.segmented_recording_active)
+
+def get_recording_status():
+    """Get the status of both recording types"""
+    return {
+        "original": video_manager.original_recording_active,
+        "segmented": video_manager.segmented_recording_active
+    }
+
+def start_dual_recording():
+    """Start both original and segmented recordings simultaneously"""
+    original_success = start_recording('original')
+    segmented_success = start_recording('segmented')
+    return original_success and segmented_success
+
+def stop_dual_recording():
+    """Stop both original and segmented recordings simultaneously"""
+    stop_recording('original')
+    stop_recording('segmented')
+    return True

@@ -1,10 +1,287 @@
 {% extends "base.html" %}
 
-{% block title %}
-Employees
-{% endblock %}
+{% block title %}Employees - Video Monitoring System{% endblock %}
 
 {% block content %}
-<h1>Employees</h1>
-<p>Manage employee information and access rights here.</p>
+<div class="employees-container">
+    <div class="employees-header">
+        <h1>Employee Management</h1>
+        <button class="action-button" onclick="openAddModal()">
+            <span class="button-icon">➕</span>
+            Add Employee
+        </button>
+    </div>
+
+    <!-- Search and Filter -->
+    <div class="search-filter">
+        <input type="text" id="searchInput" placeholder="Search employees..." onkeyup="filterEmployees()">
+        <select id="departmentFilter" onchange="filterEmployees()">
+            <option value="">All Departments</option>
+            <option value="IT">IT</option>
+            <option value="HR">HR</option>
+            <option value="Finance">Finance</option>
+            <option value="Operations">Operations</option>
+        </select>
+        <select id="statusFilter" onchange="filterEmployees()">
+            <option value="">All Status</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+        </select>
+    </div>
+
+    <!-- Employees Table -->
+    <div class="table-container">
+        <table id="employeesTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Employee ID</th>
+                    <th>Full Name</th>
+                    <th>Role</th>
+                    <th>Department</th>
+                    <th>Email</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="employeesTableBody">
+                <!-- Table content will be populated by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Add/Edit Employee Modal -->
+    <div id="employeeModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle">Add Employee</h2>
+            <form id="employeeForm" onsubmit="handleSubmit(event)">
+                <input type="hidden" id="employeeId">
+                <div class="form-group">
+                    <label for="empId">Employee ID*</label>
+                    <input type="text" id="empId" name="employeeId" required>
+                </div>
+                <div class="form-group">
+                    <label for="fullName">Full Name*</label>
+                    <input type="text" id="fullName" name="fullName" required>
+                </div>
+                <div class="form-group">
+                    <label for="role">Role*</label>
+                    <select id="role" name="role" required>
+                        <option value="">Select a role</option>
+                        <option value="Barista">Barista</option>
+                        <option value="Cashier">Cashier</option>
+                        <option value="Manager">Manager</option>
+                        <option value="Server/Waitstaff">Server/Waitstaff</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="department">Department</label>
+                    <input type="text" id="department" name="department">
+                </div>
+                <div class="form-group">
+                    <label for="email">Email*</label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="phone">Phone</label>
+                    <input type="tel" id="phone" name="phone">
+                </div>
+                <div class="form-group">
+                    <label for="hireDate">Hire Date*</label>
+                    <input type="date" id="hireDate" name="hireDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="status">Status*</label>
+                    <select id="status" name="status" required>
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                    </select>
+                </div>
+  
+                <div class="form-actions">
+                    <button type="submit" class="action-button">Save</button>
+                    <button type="button" class="action-button secondary" onclick="closeModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="modal">
+        <div class="modal-content">
+            <h2>Confirm Delete</h2>
+            <p>Are you sure you want to delete this employee?</p>
+            <div class="form-actions">
+                <button onclick="confirmDelete()" class="action-button danger">Delete</button>
+                <button onclick="closeDeleteModal()" class="action-button secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let employees = [];
+let currentEmployeeId = null;
+
+// Fetch all employees
+async function fetchEmployees() {
+    try {
+        const response = await fetch('/api/employees');
+        employees = await response.json();
+        renderEmployees(employees);
+    } catch (error) {
+        console.error('Error fetching employees:', error);
+        alert('Failed to load employees');
+    }
+}
+
+// Render employees in table
+function renderEmployees(employeesToRender) {
+    const tbody = document.getElementById('employeesTableBody');
+    tbody.innerHTML = '';
+    
+    employeesToRender.forEach(emp => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${emp.id}</td>
+            <td>${emp.employeeId}</td>
+            <td>${emp.fullName}</td>
+            <td>${emp.role}</td>
+            <td>${emp.department || '-'}</td>
+            <td>${emp.email}</td>
+            <td><span class="status-badge ${emp.status.toLowerCase()}">${emp.status}</span></td>
+            <td>
+                <button onclick="editEmployee(${emp.id})" class="action-button small">Edit</button>
+                <button onclick="deleteEmployee(${emp.id})" class="action-button small danger">Delete</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// Filter employees
+function filterEmployees() {
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    const department = document.getElementById('departmentFilter').value;
+    const status = document.getElementById('statusFilter').value;
+
+    const filtered = employees.filter(emp => {
+        const matchesSearch = emp.fullName.toLowerCase().includes(searchTerm) ||
+                            emp.email.toLowerCase().includes(searchTerm) ||
+                            emp.employeeId.toLowerCase().includes(searchTerm);
+        const matchesDepartment = !department || emp.department === department;
+        const matchesStatus = !status || emp.status === status;
+        return matchesSearch && matchesDepartment && matchesStatus;
+    });
+
+    renderEmployees(filtered);
+}
+
+// Modal functions
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add Employee';
+    document.getElementById('employeeForm').reset();
+    document.getElementById('employeeId').value = '';
+    document.getElementById('employeeModal').style.display = 'block';
+}
+
+function openEditModal(employee) {
+    document.getElementById('modalTitle').textContent = 'Edit Employee';
+    document.getElementById('employeeId').value = employee.id;
+    document.getElementById('empId').value = employee.employeeId;
+    document.getElementById('fullName').value = employee.fullName;
+    document.getElementById('role').value = employee.role;
+    document.getElementById('department').value = employee.department || '';
+    document.getElementById('email').value = employee.email;
+    document.getElementById('phone').value = employee.phone || '';
+    document.getElementById('hireDate').value = employee.hireDate;
+    document.getElementById('status').value = employee.status;
+    document.getElementById('photoUrl').value = employee.photoUrl || '';
+    document.getElementById('employeeModal').style.display = 'block';
+}
+
+function closeModal() {
+    document.getElementById('employeeModal').style.display = 'none';
+}
+
+// Form submission
+async function handleSubmit(event) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const employeeData = Object.fromEntries(formData.entries());
+    
+    try {
+        const id = document.getElementById('employeeId').value;
+        const method = id ? 'PUT' : 'POST';
+        const url = id ? `/api/employees/${id}` : '/api/employees';
+        
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(employeeData)
+        });
+
+        if (response.ok) {
+            closeModal();
+            fetchEmployees();
+        } else {
+            const error = await response.json();
+            alert(error.error || 'Failed to save employee');
+        }
+    } catch (error) {
+        console.error('Error saving employee:', error);
+        alert('Failed to save employee');
+    }
+}
+
+// Delete functions
+function deleteEmployee(id) {
+    currentEmployeeId = id;
+    document.getElementById('deleteModal').style.display = 'block';
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModal').style.display = 'none';
+    currentEmployeeId = null;
+}
+
+async function confirmDelete() {
+    if (!currentEmployeeId) return;
+
+    try {
+        const response = await fetch(`/api/employees/${currentEmployeeId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            closeDeleteModal();
+            fetchEmployees();
+        } else {
+            const error = await response.json();
+            alert(error.error || 'Failed to delete employee');
+        }
+    } catch (error) {
+        console.error('Error deleting employee:', error);
+        alert('Failed to delete employee');
+    }
+}
+
+// Edit function
+async function editEmployee(id) {
+    try {
+        const response = await fetch(`/api/employees/${id}`);
+        const employee = await response.json();
+        openEditModal(employee);
+    } catch (error) {
+        console.error('Error fetching employee:', error);
+        alert('Failed to load employee details');
+    }
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', fetchEmployees);
+</script>
 {% endblock %}

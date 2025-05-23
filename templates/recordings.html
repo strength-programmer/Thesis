@@ -5,32 +5,738 @@ Recordings
 {% endblock %}
 
 {% block content %}
-<h1>Recordings</h1>
-<p>View and manage your recorded videos here.</p>
-<ul id="recordingsList" style="list-style-type: none; padding: 0;"></ul>
+<div class="container mt-4">
+    <h1 class="text-center mb-4">Recordings</h1>
+    <p class="text-center text-muted mb-4">View and manage your recorded videos here.</p>
+    
+    <!-- Normal Recordings Section -->
+    <div class="section-container mb-5">
+        <div class="section-header">
+            <h2 class="section-title">
+                <i class="fas fa-video me-2"></i>
+                Normal Recordings
+            </h2>
+            <p class="section-subtitle text-muted">Raw video recordings from the live feed</p>
+        </div>
+        
+        <div class="row" id="normalRecordingsList">
+            <!-- Normal recordings will be loaded here -->
+        </div>
+    </div>
+
+    <!-- Divider -->
+    <div class="section-divider">
+        <hr class="divider-line">
+        <div class="divider-content">
+            <i class="fas fa-circle"></i>
+        </div>
+    </div>
+
+    <!-- Segmented Recordings Section -->
+    <div class="section-container">
+        <div class="section-header">
+            <h2 class="section-title">
+                <i class="fas fa-cut me-2"></i>
+                Segmented Recordings
+            </h2>
+            <p class="section-subtitle text-muted">Processed recordings with object detection and segmentation</p>
+        </div>
+        
+        <div class="row" id="segmentedRecordingsList">
+            <!-- Segmented recordings will be loaded here -->
+        </div>
+    </div>
+</div>
+
 <script>
+function formatDate(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+}
+
 function loadRecordings() {
-    fetch('/list_recordings').then(r => r.json()).then(data => {
-        const list = document.getElementById('recordingsList');
-        list.innerHTML = '';
-        if (data.files.length === 0) {
-            list.innerHTML = '<li style="color:#888;">No recordings found.</li>';
+    fetch('/list_recordings')
+        .then(r => r.json())
+        .then(data => {
+            const normalContainer = document.getElementById('normalRecordingsList');
+            const segmentedContainer = document.getElementById('segmentedRecordingsList');
+            
+            // Clear both containers
+            normalContainer.innerHTML = '';
+            segmentedContainer.innerHTML = '';
+            
+            if (data.files.length === 0 && (!data.processing || data.processing.length === 0)) {
+                normalContainer.innerHTML = `
+                    <div class="col-12 text-center">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            No normal recordings found.
+                        </div>
+                    </div>`;
+                    
+                segmentedContainer.innerHTML = `
+                    <div class="col-12 text-center">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            No segmented recordings found.
+                        </div>
+                    </div>`;
+            } else {
+                // Separate files into normal and segmented recordings
+                const normalFiles = data.files.filter(file => !file.startsWith('segmented_recordings/'));
+                const segmentedFiles = data.files.filter(file => file.startsWith('segmented_recordings/'));
+                const processingFiles = data.processing || [];
+                
+                // Load normal recordings
+                if (normalFiles.length === 0) {
+                    normalContainer.innerHTML = `
+                        <div class="col-12 text-center">
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle me-2"></i>
+                                No normal recordings found.
+                            </div>
+                        </div>`;
+                } else {
+                    normalFiles.forEach(function(file) {
+                        const col = createRecordingCard(file, 'normal');
+                        normalContainer.appendChild(col);
+                    });
+                }
+                
+                // Load segmented recordings
+                let segmentedContent = '';
+                if (segmentedFiles.length === 0 && processingFiles.length === 0) {
+                    segmentedContainer.innerHTML = `
+                        <div class="col-12 text-center">
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle me-2"></i>
+                                No segmented recordings found.
+                            </div>
+                        </div>`;
+                } else {
+                    // Add processing files
+                    processingFiles.forEach(function(file) {
+                        const col = createProcessingCard(file);
+                        segmentedContainer.appendChild(col);
+                    });
+                    
+                    // Add completed segmented recordings
+                    segmentedFiles.forEach(function(file) {
+                        const col = createRecordingCard(file, 'segmented');
+                        segmentedContainer.appendChild(col);
+                    });
+                }
+
+                // Add event listeners for delete buttons
+                document.querySelectorAll('.delete-button').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const filename = this.dataset.filename;
+                        if (confirm(`Are you sure you want to delete ${filename}?`)) {
+                            deleteRecording(filename);
+                        }
+                    });
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error loading recordings:', error);
+            const normalContainer = document.getElementById('normalRecordingsList');
+            const segmentedContainer = document.getElementById('segmentedRecordingsList');
+            
+            const errorMessage = `
+                <div class="col-12 text-center">
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        Error loading recordings. Please try again later.
+                    </div>
+                </div>`;
+                
+            normalContainer.innerHTML = errorMessage;
+            segmentedContainer.innerHTML = errorMessage;
+        });
+}
+
+function createRecordingCard(file, type) {
+    const col = document.createElement('div');
+    col.className = 'col-md-6 mb-4';
+    
+    // Add type-specific styling
+    const cardClass = type === 'segmented' ? 'card h-100 shadow-sm segmented-card' : 'card h-100 shadow-sm normal-card';
+    const typeIcon = type === 'segmented' ? '<i class="fas fa-cut me-1"></i>' : '<i class="fas fa-video me-1"></i>';
+    
+    col.innerHTML = `
+        <div class="${cardClass}">
+            <div class="card-body d-flex flex-column">
+                <h5 class="card-title text-truncate mb-2" title="${file}">
+                    ${typeIcon}${file}
+                </h5>
+                <div class="video-preview mb-3 flex-grow-1">
+                    <video class="w-100 rounded" controls preload="metadata" 
+                           onerror="handleVideoError(this, '${file}')" 
+                           onloadedmetadata="handleVideoLoaded(this, '${file}')"
+                           oncanplay="handleVideoCanPlay(this, '${file}')">
+                        <source src="/recordings/${encodeURIComponent(file)}" type="video/mp4" 
+                                onerror="handleSourceError(this, '${file}')" />
+                        <source src="/recordings/${encodeURIComponent(file)}" type="video/avi" />
+                        <p class="text-danger p-3">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Your browser does not support video playback or the video format is not supported.
+                            <br><small>Try downloading the video to play it with an external player.</small>
+                        </p>
+                    </video>
+                    <div class="video-error-info" style="display: none;">
+                        <small class="text-muted">Video info: <span class="video-details"></span></small>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between align-items-center mt-auto button-group">
+                    <a href="/recordings/${encodeURIComponent(file)}" 
+                       class="btn btn-primary btn-sm me-2 download-button" 
+                       download="${file}">
+                        <i class="fas fa-download me-1"></i>
+                        Download
+                    </a>
+                    <button class="btn btn-outline-danger btn-sm delete-button" 
+                            data-filename="${file}">
+                        <i class="fas fa-trash me-1"></i>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>`;
+    
+    return col;
+}
+
+function createProcessingCard(file) {
+    const col = document.createElement('div');
+    col.className = 'col-md-6 mb-4';
+    
+    // Extract timestamp from filename for display
+    const displayName = file.replace('raw_segmented_recording_', 'segmented_recording_');
+    
+    // Generate unique ID for this processing card
+    const cardId = `processing-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    col.innerHTML = `
+        <div class="card h-100 shadow-sm processing-card" id="${cardId}">
+            <div class="card-body d-flex flex-column">
+                <h5 class="card-title text-truncate mb-2" title="${displayName}">
+                    <i class="fas fa-cog fa-spin me-1"></i>${displayName}
+                </h5>
+                <div class="processing-preview mb-3 flex-grow-1 d-flex align-items-center justify-content-center">
+                    <div class="text-center w-100">
+                        <div class="processing-icon mb-3">
+                            <i class="fas fa-video fa-3x text-warning mb-2"></i>
+                            <div class="spinner-border text-warning" role="status">
+                                <span class="visually-hidden">Processing...</span>
+                            </div>
+                        </div>
+                        <h6 class="text-muted mb-2">Processing Video</h6>
+                        <p class="small text-muted mb-3">
+                            Applying person detection and segmentation...
+                        </p>
+                        
+                        <!-- Enhanced Progress Bar -->
+                        <div class="progress-container">
+                            <div class="d-flex justify-content-between mb-2">
+                                <small class="text-muted">Progress</small>
+                                <small class="text-muted processing-percentage">Processing...</small>
+                            </div>
+                            <div class="progress mb-2" style="height: 8px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" 
+                                     role="progressbar" 
+                                     style="width: 0%"
+                                     aria-valuenow="0" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">
+                                </div>
+                            </div>
+                            <small class="text-muted processing-status">
+                                <i class="fas fa-play-circle me-1"></i>
+                                Initializing processing...
+                            </small>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-center align-items-center mt-auto">
+                    <small class="text-muted">
+                        <i class="fas fa-clock me-1"></i>
+                        Video preview will be available after processing
+                    </small>
+                </div>
+            </div>
+        </div>`;
+    
+    // Start simulated progress animation
+    startProgressAnimation(cardId);
+    
+    return col;
+}
+
+function deleteRecording(filename) {
+    fetch(`/delete_recording/${encodeURIComponent(filename)}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadRecordingsWithAutoRefresh(); // Reload the list with auto-refresh
         } else {
-            data.files.forEach(function(file) {
-                const li = document.createElement('li');
-                li.style.marginBottom = '10px';
-                const link = document.createElement('a');
-                link.href = '/recordings/' + encodeURIComponent(file);
-                link.textContent = file;
-                link.style.color = '#3498db';
-                link.style.textDecoration = 'underline';
-                link.target = '_blank';
-                li.appendChild(link);
-                list.appendChild(li);
-            });
+            alert('Error deleting recording: ' + data.error);
         }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error deleting recording. Please try again.');
     });
 }
-document.addEventListener('DOMContentLoaded', loadRecordings);
+
+function handleVideoError(videoElement, filename) {
+    console.error('Video error for', filename, ':', videoElement.error);
+    console.log('Video source:', videoElement.currentSrc);
+    console.log('Video readyState:', videoElement.readyState);
+    console.log('Video networkState:', videoElement.networkState);
+    
+    const errorInfo = videoElement.parentElement.querySelector('.video-error-info');
+    const details = videoElement.parentElement.querySelector('.video-details');
+    
+    let errorMessage = 'Unknown error';
+    if (videoElement.error) {
+        switch(videoElement.error.code) {
+            case 1:
+                errorMessage = 'Video loading aborted';
+                break;
+            case 2:
+                errorMessage = 'Network error';
+                break;
+            case 3:
+                errorMessage = 'Video decoding failed - codec not supported';
+                break;
+            case 4:
+                errorMessage = 'Video format not supported';
+                break;
+        }
+    }
+    
+    console.error(`Video error: ${errorMessage} for file: ${filename}`);
+    
+    if (details) {
+        details.textContent = `Error: ${errorMessage}`;
+        errorInfo.style.display = 'block';
+    }
+    
+    // Replace video with error message and test link
+    videoElement.style.display = 'none';
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'alert alert-warning text-center p-3';
+    errorDiv.innerHTML = `
+        <i class="fas fa-exclamation-triangle me-2"></i>
+        <strong>Video Playback Error</strong><br>
+        <small>${errorMessage}</small><br>
+        <small class="text-muted">File: ${filename}</small><br>
+        <a href="/recordings/${encodeURIComponent(filename)}" target="_blank" class="btn btn-sm btn-outline-primary mt-2">
+            Open video in new tab
+        </a>
+    `;
+    videoElement.parentElement.appendChild(errorDiv);
+}
+
+function handleSourceError(sourceElement, filename) {
+    console.error('Source error for', filename, ':', sourceElement.error);
+}
+
+function handleVideoLoaded(videoElement, filename) {
+    console.log('Video metadata loaded for', filename);
+    console.log('Duration:', videoElement.duration);
+    console.log('Dimensions:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+    console.log('Current source:', videoElement.currentSrc);
+    
+    const errorInfo = videoElement.parentElement.querySelector('.video-error-info');
+    const details = videoElement.parentElement.querySelector('.video-details');
+    
+    if (details) {
+        details.textContent = `Duration: ${Math.round(videoElement.duration)}s, Size: ${videoElement.videoWidth}x${videoElement.videoHeight}`;
+        errorInfo.style.display = 'block';
+    }
+}
+
+function handleVideoCanPlay(videoElement, filename) {
+    console.log('Video can play:', filename);
+}
+
+// Auto-refresh functionality
+let refreshInterval;
+let progressAnimations = {}; // Track progress animations for each card
+
+function startProgressAnimation(cardId) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    
+    const progressBar = card.querySelector('.progress-bar');
+    const progressPercentage = card.querySelector('.processing-percentage');
+    const progressStatus = card.querySelector('.processing-status');
+    
+    if (!progressBar || !progressPercentage || !progressStatus) return;
+    
+    let progress = 0;
+    const steps = [
+        { percent: 15, status: 'Loading models...', icon: 'fas fa-download' },
+        { percent: 30, status: 'Analyzing video frames...', icon: 'fas fa-search' },
+        { percent: 50, status: 'Detecting persons...', icon: 'fas fa-user-check' },
+        { percent: 70, status: 'Applying segmentation...', icon: 'fas fa-cut' },
+        { percent: 85, status: 'Processing masks...', icon: 'fas fa-layer-group' },
+        { percent: 95, status: 'Finalizing video...', icon: 'fas fa-check-circle' }
+    ];
+    
+    let currentStep = 0;
+    
+    progressAnimations[cardId] = setInterval(() => {
+        if (currentStep < steps.length) {
+            const step = steps[currentStep];
+            const targetPercent = step.percent;
+            
+            // Animate to the target percentage
+            if (progress < targetPercent) {
+                progress += Math.random() * 3 + 1; // Random increment between 1-4
+                if (progress > targetPercent) progress = targetPercent;
+                
+                progressBar.style.width = `${progress}%`;
+                progressBar.setAttribute('aria-valuenow', progress);
+                progressPercentage.textContent = `${Math.floor(progress)}%`;
+            } else {
+                // Move to next step
+                progressStatus.innerHTML = `<i class="${step.icon} me-1"></i>${step.status}`;
+                currentStep++;
+            }
+        } else {
+            // Keep at 95% until actual completion
+            if (progress < 95) {
+                progress = 95;
+                progressBar.style.width = `${progress}%`;
+                progressBar.setAttribute('aria-valuenow', progress);
+                progressPercentage.textContent = `${Math.floor(progress)}%`;
+            }
+            progressStatus.innerHTML = `<i class="fas fa-cog fa-spin me-1"></i>Finalizing...`;
+        }
+    }, 2000 + Math.random() * 1000); // Random interval between 2-3 seconds
+}
+
+function stopProgressAnimation(cardId) {
+    if (progressAnimations[cardId]) {
+        clearInterval(progressAnimations[cardId]);
+        delete progressAnimations[cardId];
+    }
+}
+
+function startAutoRefresh() {
+    // Refresh every 5 seconds when there are processing files
+    refreshInterval = setInterval(() => {
+        fetch('/list_recordings')
+            .then(r => r.json())
+            .then(data => {
+                if (data.processing && data.processing.length > 0) {
+                    // Still processing, reload the recordings
+                    loadRecordings();
+                } else {
+                    // No more processing files, stop auto-refresh
+                    stopAutoRefresh();
+                    loadRecordings(); // Final reload
+                }
+            })
+            .catch(error => {
+                console.error('Auto-refresh error:', error);
+            });
+    }, 5000);
+}
+
+function stopAutoRefresh() {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+    }
+    // Clean up any remaining progress animations
+    Object.keys(progressAnimations).forEach(cardId => {
+        stopProgressAnimation(cardId);
+    });
+}
+
+// Enhanced loadRecordings function with auto-refresh
+function loadRecordingsWithAutoRefresh() {
+    loadRecordings();
+    
+    // Check if we need to start auto-refresh
+    fetch('/list_recordings')
+        .then(r => r.json())
+        .then(data => {
+            if (data.processing && data.processing.length > 0) {
+                startAutoRefresh();
+            } else {
+                stopAutoRefresh();
+            }
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadRecordingsWithAutoRefresh();
+    testVideoAccess();
+});
 </script>
+
+<style>
+/* Section Styling */
+.section-container {
+    margin-bottom: 2rem;
+}
+
+.section-header {
+    text-align: center;
+    margin-bottom: 2rem;
+    padding: 1.5rem 0;
+}
+
+.section-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+}
+
+.section-subtitle {
+    font-size: 1rem;
+    margin-bottom: 0;
+}
+
+/* Divider Styling */
+.section-divider {
+    position: relative;
+    margin: 3rem 0;
+    text-align: center;
+}
+
+.divider-line {
+    border: none;
+    height: 2px;
+    background: linear-gradient(to right, transparent, #dee2e6, transparent);
+    margin: 0;
+}
+
+.divider-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #fff;
+    padding: 0 1rem;
+    color: #6c757d;
+    font-size: 0.8rem;
+}
+
+/* Card Type Specific Styling */
+.normal-card {
+    border-left: 4px solid #007bff;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.segmented-card {
+    border-left: 4px solid #28a745;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.normal-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 123, 255, 0.15) !important;
+}
+
+.segmented-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 0.5rem 1rem rgba(40, 167, 69, 0.15) !important;
+}
+
+/* Existing Card Styling */
+.card {
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: none;
+}
+
+.card-body {
+    padding: 1.5rem;
+}
+
+.card-title {
+    font-size: 1.15rem;
+    color: #343a40;
+}
+
+.video-preview {
+    background: #f8f9fa;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    padding-top: 56.25%; /* 16:9 Aspect Ratio */
+    margin-bottom: 1rem;
+}
+
+.video-preview video {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+
+/* Processing Card Styling */
+.processing-card {
+    border-left: 4px solid #ffc107;
+    background: linear-gradient(135deg, #fff9e6 0%, #ffffff 100%);
+    border: 1px solid #ffeeba;
+}
+
+.processing-preview {
+    background: linear-gradient(135deg, #fff9e6 0%, #fffaf0 100%);
+    border-radius: 8px;
+    min-height: 280px;
+    border: 2px dashed #ffc107;
+    padding: 1.5rem;
+}
+
+.processing-icon {
+    position: relative;
+    display: inline-block;
+}
+
+.processing-icon .spinner-border {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2rem;
+    height: 2rem;
+}
+
+.progress-container {
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto;
+}
+
+.progress {
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.progress-bar {
+    transition: width 0.6s ease;
+    background: linear-gradient(45deg, #ffc107, #ffed4e);
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-bar-animated::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.3),
+        transparent
+    );
+    animation: shine 2s infinite;
+}
+
+@keyframes shine {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+.processing-percentage {
+    font-weight: 600;
+    color: #856404;
+}
+
+.processing-status {
+    color: #6c757d;
+    font-size: 0.85rem;
+    display: block;
+    margin-top: 0.5rem;
+}
+
+.processing-status i {
+    color: #ffc107;
+}
+
+/* Button Styling */
+.btn {
+    font-weight: 500;
+    border-radius: 0.375rem;
+    padding: 0.5rem 1rem;
+    display: inline-flex;
+    align-items: center;
+}
+
+.download-button {
+    background-color: #007bff;
+    border-color: #007bff;
+    color: #fff;
+    box-shadow: 0 2px 4px rgba(0, 123, 255, 0.2);
+}
+
+.download-button:hover {
+    background-color: #0056b3;
+    border-color: #004085;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+}
+
+.delete-button {
+    background-color: transparent;
+    border: 1px solid #dc3545;
+    color: #dc3545;
+    box-shadow: 0 2px 4px rgba(220, 53, 69, 0.1);
+}
+
+.delete-button:hover {
+    background-color: #dc3545;
+    color: #fff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(220, 53, 69, 0.2);
+}
+
+/* Spacing between buttons */
+.button-group .btn:not(:last-child) {
+    margin-right: 0.75rem;
+}
+
+/* Responsive Design */
+.col-md-6 {
+    width: 50%;
+}
+
+@media (max-width: 768px) {
+    .col-md-6 {
+        width: 100%;
+    }
+    
+    .section-title {
+        font-size: 1.5rem;
+    }
+    
+    .button-group {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .button-group .btn {
+        margin-right: 0 !important;
+        margin-bottom: 0.75rem;
+    }
+}
+</style>
 {% endblock %}

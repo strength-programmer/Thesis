@@ -1,5 +1,113 @@
-{% extends 'base.html' %}
+{% extends "base.html" %}
+
+{% block title %}Home - Video Monitoring System{% endblock %}
 
 {% block content %}
-    <h1>{% block title %} Welcome to your Flask app! {% endblock %}</h1>
+<div class="hero-section">
+    <h1>Welcome to Video Monitoring System</h1>
+    <p class="subtitle">Advanced video monitoring and activity recognition platform</p>
+</div>
+
+<div class="features-grid">
+    <div class="feature-card" data-href="{{ url_for('livefeed_page') }}">
+        <div class="card-icon">📹</div>
+        <h3>Live Feed</h3>
+        <p>Monitor real-time video feed with advanced activity recognition</p>
+        <!-- <div class="card-status" id="activity-status">Checking status...</div> -->
+    </div>
+
+    <div class="feature-card" data-href="{{ url_for('recordings') }}">
+        <div class="card-icon">🎥</div>
+        <h3>Recordings</h3>
+        <p>Access and manage your recorded video sessions</p>
+        <!-- <div class="card-status" id="recording-status">Checking status...</div> -->
+    </div>
+
+    <div class="feature-card" data-href="{{ url_for('employees') }}">
+        <div class="card-icon">👥</div>
+        <h3>Employees</h3>
+        <p>Manage employee access and permissions</p>
+    </div>
+
+    <div class="feature-card" data-href="{{ url_for('account') }}">
+        <div class="card-icon">⚙️</div>
+        <h3>Settings</h3>
+        <p>Configure your account and system preferences</p>
+    </div>
+</div>
+
+<!-- <div class="quick-actions">
+    <button class="action-button" id="toggle-activity">
+        <span class="button-icon">🎯</span>
+        Toggle Activity Recognition
+    </button>
+    <button class="action-button" id="toggle-recording">
+        <span class="button-icon">⏺️</span>
+        Start Recording
+    </button>
+</div> -->
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Add click handlers for feature cards
+    document.querySelectorAll('.feature-card').forEach(card => {
+        card.addEventListener('click', function() {
+            window.location.href = this.dataset.href;
+        });
+    });
+
+    // Update activity status
+    function updateActivityStatus() {
+        fetch('/activity_status')
+            .then(response => response.json())
+            .then(data => {
+                const statusElement = document.getElementById('activity-status');
+                statusElement.textContent = data.active ? 'Active' : 'Inactive';
+                statusElement.className = 'card-status ' + (data.active ? 'status-active' : 'status-inactive');
+            });
+    }
+
+    // Update recording status
+    function updateRecordingStatus() {
+        fetch('/recording_status')
+            .then(response => response.json())
+            .then(data => {
+                const statusElement = document.getElementById('recording-status');
+                statusElement.textContent = data.recording ? 'Recording' : 'Not Recording';
+                statusElement.className = 'card-status ' + (data.recording ? 'status-recording' : 'status-inactive');
+            });
+    }
+
+    // Toggle activity recognition
+    document.getElementById('toggle-activity').addEventListener('click', function() {
+        fetch('/toggle_activity', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                updateActivityStatus();
+            });
+    });
+
+    // Toggle recording
+    document.getElementById('toggle-recording').addEventListener('click', function() {
+        fetch('/toggle_recording', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                updateRecordingStatus();
+                this.querySelector('.button-icon').textContent = data.recording ? '⏹️' : '⏺️';
+                this.innerHTML = this.innerHTML.replace(
+                    data.recording ? 'Start Recording' : 'Stop Recording',
+                    data.recording ? 'Stop Recording' : 'Start Recording'
+                );
+            });
+    });
+
+    // Initial status updates
+    updateActivityStatus();
+    updateRecordingStatus();
+
+    // Periodic status updates
+    setInterval(updateActivityStatus, 5000);
+    setInterval(updateRecordingStatus, 5000);
+});
+</script>
 {% endblock %}
