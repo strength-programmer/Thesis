@@ -444,6 +444,9 @@ class VideoManager:
         frame = cv2.flip(frame, 1)
         frame = cv2.resize(frame, (self.config.display_width, self.config.display_height))
         
+        # Store current frame for employee capture
+        self.current_frame = frame.copy()
+        
         # Add to delay buffer
         self.delay_buffer.append(frame.copy())
         
@@ -462,6 +465,14 @@ class VideoManager:
         else:
             person_detections = self.last_person_detections
             
+        # Store current detections for employee capture
+        # Convert detections to simple format for employee capture
+        self.current_detections = []
+        for person in person_detections:
+            box, score = person["box"], person["score"]
+            # Store as [x1, y1, x2, y2, confidence]
+            self.current_detections.append([box[0], box[1], box[2], box[3], score])
+            
         # Process frame for action recognition
         delayed_frame_resized = cv2.resize(
             delayed_frame, 
@@ -475,21 +486,36 @@ class VideoManager:
         if len(self.buffer) > 2 * 9:  # 9 is required_frames
             self.buffer.pop(0)
             
-        # Find persons in ROI
+        # Find persons in ROI and track their original indices
         out_frame = delayed_frame.copy()
         persons_in_roi = []
+        roi_to_original_mapping = {}  # Maps ROI index to original detection index
         
-        for p in person_detections:
+        for i, p in enumerate(person_detections):
             box = p["box"]
             cx = (box[0] + box[2]) // 2
             cy = (box[1] + box[3]) // 2
             if is_on_active_side((cx, cy), self.config.roi_line_p1, self.config.roi_line_p2):
+                roi_index = len(persons_in_roi)
                 persons_in_roi.append(p)
+                roi_to_original_mapping[roi_index] = i
                 
         # Action recognition
         person_actions = {}
         if self.model_manager.activity_recognition_on and len(self.buffer) >= 9:
             person_actions = self.model_manager.recognize_actions(self.buffer, persons_in_roi)
+            
+        # Store current activities for employee capture using original detection indices
+        self.current_activities = {}
+        for roi_idx, actions in person_actions.items():
+            original_idx = roi_to_original_mapping.get(roi_idx)
+            if original_idx is not None:
+                # Convert actions to readable format
+                action_names = []
+                for action_idx, confidence in actions:
+                    if action_idx < len(self.model_manager.captions):
+                        action_names.append(self.model_manager.captions[action_idx])
+                self.current_activities[original_idx] = action_names
             
         # Draw ROI line
         cv2.line(out_frame, self.config.roi_line_p1, self.config.roi_line_p2, (0, 255, 255), 2)
@@ -701,6 +727,200 @@ class VideoManager:
         finally:
             cap.release()
             print("Frame generator cleanup complete.")
+
+# ----------------------
+# Employee Activity Monitoring
+# ----------------------
+# Employee activity storage
+employee_captures = []
+employee_act_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'employee_act')
+
+# Create employee_act directory if it doesn't exist
+if not os.path.exists(employee_act_dir):
+    os.makedirs(employee_act_dir)
+
+def capture_employee_activity():
+    """Capture current frame with employee detection and activity recognition"""
+    try:
+        # Get current frame and detection results
+        current_frame = video_manager.current_frame
+        if current_frame is None:
+            return {"success": False, "error": "No current frame available"}
+        
+        # Get current detections and activities
+        detections = getattr(video_manager, 'current_detections', [])
+        activities = getattr(video_manager, 'current_activities', {})
+        
+        if not detections:
+            return {"success": True, "employees_detected": 0, "message": "No employees detected in current frame"}
+        
+        # Get frame dimensions for quadrant calculation
+        h, w = current_frame.shape[:2]
+        center_x, center_y = w // 2, h // 2
+        
+        # Get ROI line coordinates from config
+        roi_line_p1 = (7, 299)
+        roi_line_p2 = (1253, 675)
+        
+        captured_employees = []
+        timestamp = datetime.datetime.now()
+        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
+        
+        # Create timestamped folder only if we have valid captures
+        timestamp_folder = None
+        
+        for i, detection in enumerate(detections):
+            try:
+                # Extract bounding box coordinates
+                x1, y1, x2, y2 = map(int, detection[:4])
+                confidence = detection[4] if len(detection) > 4 else 0.0
+                
+                # Calculate center point of bounding box
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
+                
+                # Check if person is in ROI using the existing ROI line logic
+                if not is_on_active_side((cx, cy), roi_line_p1, roi_line_p2):
+                    continue  # Skip if not in ROI
+                
+                # Check if person is in quadrants 2 or 3 (left side of frame)
+                # Quadrant 2: x < center_x, y < center_y (left upper)
+                # Quadrant 3: x < center_x, y > center_y (left lower)
+                if cx >= center_x:
+                    continue  # Skip if in right quadrants (1 or 4)
+                
+                # Get activities for this detection
+                detection_activities = activities.get(i, [])
+                if isinstance(detection_activities, str):
+                    detection_activities = [detection_activities]
+                elif not isinstance(detection_activities, list):
+                    detection_activities = []
+                
+                # Only capture if person has detected activities
+                if not detection_activities:
+                    continue  # Skip if no activities detected
+                
+                # Ensure coordinates are within frame bounds
+                x1 = max(0, min(x1, w))
+                y1 = max(0, min(y1, h))
+                x2 = max(0, min(x2, w))
+                y2 = max(0, min(y2, h))
+                
+                # Add a small margin around the person detection (5% of width/height)
+                margin_x = int((x2 - x1) * 0.05)
+                margin_y = int((y2 - y1) * 0.05)
+                
+                # Apply margin but keep within frame bounds
+                crop_x1 = max(0, x1 - margin_x)
+                crop_y1 = max(0, y1 - margin_y)
+                crop_x2 = min(w, x2 + margin_x)
+                crop_y2 = min(h, y2 + margin_y)
+                
+                # Crop the employee from the frame - this extracts just the person within the bounding box
+                employee_crop = current_frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+                
+                # Debug info
+                print(f"Cropping person at coordinates: x1={crop_x1}, y1={crop_y1}, x2={crop_x2}, y2={crop_y2}")
+                
+                if employee_crop.size == 0:
+                    print(f"Warning: Empty crop detected for employee {i+1}")
+                    continue
+                
+                # Create timestamped folder if this is the first valid capture
+                if timestamp_folder is None:
+                    timestamp_folder = os.path.join(employee_act_dir, timestamp_str)
+                    if not os.path.exists(timestamp_folder):
+                        os.makedirs(timestamp_folder)
+                
+                # Generate employee ID and filename
+                employee_id = f"EMP_{i+1:03d}"
+                filename = f"employee_{employee_id}_{timestamp_str}.jpg"
+                filepath = os.path.join(timestamp_folder, filename)
+                
+                # Save the cropped image
+                cv2.imwrite(filepath, employee_crop)
+                
+                # Determine quadrant for ROI info
+                quadrant = 2 if cy < center_y else 3
+                roi_info = f"ROI Quadrant {quadrant}"
+                
+                # Create capture record
+                capture_data = {
+                    "employee_id": employee_id,
+                    "timestamp": timestamp.isoformat(),
+                    "image_path": f"{timestamp_str}/{filename}",  # Use forward slash for web URLs
+                    "activities": detection_activities,
+                    "confidence": confidence,
+                    "bounding_box": [x1, y1, x2, y2],
+                    "roi_info": roi_info
+                }
+                
+                captured_employees.append(capture_data)
+                employee_captures.append(capture_data)
+                
+            except Exception as e:
+                print(f"Error processing detection {i}: {e}")
+                continue
+        
+        # Keep only recent captures (last 100)
+        if len(employee_captures) > 100:
+            employee_captures[:] = employee_captures[-100:]
+        
+        return {
+            "success": True,
+            "employees_detected": len(captured_employees),
+            "timestamp": timestamp.isoformat(),
+            "captures": captured_employees
+        }
+        
+    except Exception as e:
+        print(f"Error in capture_employee_activity: {e}")
+        return {"success": False, "error": str(e)}
+
+def get_employee_captures():
+    """Get list of employee captures with statistics"""
+    try:
+        # Sort captures by timestamp (newest first)
+        sorted_captures = sorted(employee_captures, key=lambda x: x['timestamp'], reverse=True)
+        
+        # Calculate statistics
+        total_captures = len(employee_captures)
+        unique_employees = len(set(capture['employee_id'] for capture in employee_captures))
+        
+        statistics = {
+            "total_captures": total_captures,
+            "total_employees": unique_employees
+        }
+        
+        return {
+            "success": True,
+            "captures": sorted_captures[:50],  # Return latest 50 captures
+            "statistics": statistics
+        }
+        
+    except Exception as e:
+        print(f"Error in get_employee_captures: {e}")
+        return {"success": False, "error": str(e)}
+
+def clear_employee_captures():
+    """Clear all employee captures and delete associated files"""
+    try:
+        global employee_captures
+        
+        # Delete all files in employee_act directory
+        if os.path.exists(employee_act_dir):
+            import shutil
+            shutil.rmtree(employee_act_dir)
+            os.makedirs(employee_act_dir)
+        
+        # Clear the captures list
+        employee_captures.clear()
+        
+        return {"success": True, "message": "All employee captures cleared"}
+        
+    except Exception as e:
+        print(f"Error in clear_employee_captures: {e}")
+        return {"success": False, "error": str(e)}
 
 # ----------------------
 # Main Application

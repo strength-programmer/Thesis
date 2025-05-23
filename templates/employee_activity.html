@@ -1,0 +1,490 @@
+{% extends "base.html" %}
+
+{% block title %}
+Employee Activity Monitoring
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="text-center mb-4">Employee Activity Monitoring</h1>
+    <p class="text-center text-muted mb-4">Real-time employee activity detection and logging</p>
+    
+    <!-- Control Panel -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="fas fa-cogs me-2"></i>
+                        Control Panel
+                    </h5>
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <button id="startMonitoring" class="btn btn-success me-2">
+                                <i class="fas fa-play me-1"></i>
+                                Start Monitoring
+                            </button>
+                            <button id="stopMonitoring" class="btn btn-danger me-2" disabled>
+                                <i class="fas fa-stop me-1"></i>
+                                Stop Monitoring
+                            </button>
+                            <button id="refreshData" class="btn btn-primary">
+                                <i class="fas fa-refresh me-1"></i>
+                                Refresh
+                            </button>
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <div class="monitoring-status">
+                                <span class="badge bg-secondary" id="statusBadge">
+                                    <i class="fas fa-circle me-1"></i>
+                                    Stopped
+                                </span>
+                                <small class="text-muted ms-2" id="lastCapture">
+                                    Last capture: Never
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center stat-card">
+                <div class="card-body">
+                    <i class="fas fa-users fa-2x text-primary mb-2"></i>
+                    <h4 class="stat-number" id="totalEmployees">0</h4>
+                    <p class="card-text text-muted">Total Employees</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center stat-card">
+                <div class="card-body">
+                    <i class="fas fa-camera fa-2x text-success mb-2"></i>
+                    <h4 class="stat-number" id="totalCaptures">0</h4>
+                    <p class="card-text text-muted">Total Captures</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center stat-card">
+                <div class="card-body">
+                    <i class="fas fa-clock fa-2x text-warning mb-2"></i>
+                    <h4 class="stat-number" id="nextCaptureCountdown">--</h4>
+                    <p class="card-text text-muted">Next Capture (s)</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center stat-card">
+                <div class="card-body">
+                    <i class="fas fa-running fa-2x text-info mb-2"></i>
+                    <h4 class="stat-number" id="activeEmployees">0</h4>
+                    <p class="card-text text-muted">Active Now</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Captures -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-history me-2"></i>
+                        Recent Employee Activity Captures
+                    </h5>
+                    <button class="btn btn-outline-secondary btn-sm" id="clearHistory">
+                        <i class="fas fa-trash me-1"></i>
+                        Clear History
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="row" id="capturesList">
+                        <div class="col-12 text-center">
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle me-2"></i>
+                                No employee activity captures yet. Start monitoring to begin capturing employee activities.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let monitoringActive = false;
+let captureInterval;
+let countdownInterval;
+let nextCaptureTime = 0;
+
+// DOM Elements
+const startBtn = document.getElementById('startMonitoring');
+const stopBtn = document.getElementById('stopMonitoring');
+const refreshBtn = document.getElementById('refreshData');
+const statusBadge = document.getElementById('statusBadge');
+const lastCaptureSpan = document.getElementById('lastCapture');
+const capturesList = document.getElementById('capturesList');
+const totalEmployees = document.getElementById('totalEmployees');
+const totalCaptures = document.getElementById('totalCaptures');
+const nextCaptureCountdown = document.getElementById('nextCaptureCountdown');
+const activeEmployees = document.getElementById('activeEmployees');
+const clearHistoryBtn = document.getElementById('clearHistory');
+
+// Event Listeners
+startBtn.addEventListener('click', startMonitoring);
+stopBtn.addEventListener('click', stopMonitoring);
+refreshBtn.addEventListener('click', loadEmployeeCaptures);
+clearHistoryBtn.addEventListener('click', clearCaptureHistory);
+
+function startMonitoring() {
+    if (monitoringActive) return;
+    
+    monitoringActive = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    
+    // Update status
+    statusBadge.innerHTML = '<i class="fas fa-circle me-1"></i>Active';
+    statusBadge.className = 'badge bg-success';
+    
+    // Start capture cycle
+    startCaptureInterval();
+    
+    console.log('Employee monitoring started');
+}
+
+function stopMonitoring() {
+    if (!monitoringActive) return;
+    
+    monitoringActive = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    
+    // Update status
+    statusBadge.innerHTML = '<i class="fas fa-circle me-1"></i>Stopped';
+    statusBadge.className = 'badge bg-secondary';
+    
+    // Clear intervals
+    if (captureInterval) {
+        clearInterval(captureInterval);
+        captureInterval = null;
+    }
+    if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+    }
+    
+    nextCaptureCountdown.textContent = '--';
+    console.log('Employee monitoring stopped');
+}
+
+function startCaptureInterval() {
+    // Initial capture
+    captureEmployeeActivity();
+    
+    // Set up 15-second interval
+    captureInterval = setInterval(() => {
+        captureEmployeeActivity();
+    }, 15000); // 15 seconds
+    
+    // Start countdown
+    startCountdown();
+}
+
+function startCountdown() {
+    nextCaptureTime = 15;
+    nextCaptureCountdown.textContent = nextCaptureTime;
+    
+    countdownInterval = setInterval(() => {
+        nextCaptureTime--;
+        nextCaptureCountdown.textContent = nextCaptureTime;
+        
+        if (nextCaptureTime <= 0) {
+            nextCaptureTime = 15;
+        }
+    }, 1000);
+}
+
+function captureEmployeeActivity() {
+    if (!monitoringActive) return;
+    
+    console.log('Capturing employee activity...');
+    
+    fetch('/capture_employee_activity', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log('Employee activity captured:', data);
+            lastCaptureSpan.textContent = `Last capture: ${new Date().toLocaleTimeString()}`;
+            
+            // Update statistics
+            if (data.employees_detected) {
+                activeEmployees.textContent = data.employees_detected;
+            }
+            
+            // Reload captures list
+            loadEmployeeCaptures();
+        } else {
+            console.error('Failed to capture employee activity:', data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error capturing employee activity:', error);
+    });
+}
+
+function loadEmployeeCaptures() {
+    fetch('/list_employee_captures')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayCaptures(data.captures);
+                updateStatistics(data.statistics);
+            } else {
+                console.error('Failed to load employee captures:', data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error loading employee captures:', error);
+            capturesList.innerHTML = `
+                <div class="col-12 text-center">
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        Error loading employee captures. Please try again.
+                    </div>
+                </div>`;
+        });
+}
+
+function displayCaptures(captures) {
+    if (!captures || captures.length === 0) {
+        capturesList.innerHTML = `
+            <div class="col-12 text-center">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    No employee activity captures yet. Start monitoring to begin capturing employee activities.
+                </div>
+            </div>`;
+        return;
+    }
+    
+    capturesList.innerHTML = '';
+    
+    captures.forEach(capture => {
+        const col = document.createElement('div');
+        col.className = 'col-md-6 col-lg-4 mb-3';
+        
+        col.innerHTML = `
+            <div class="card capture-card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        <i class="fas fa-clock me-1"></i>
+                        ${new Date(capture.timestamp).toLocaleString()}
+                    </small>
+                    <span class="badge bg-primary">
+                        Employee ${capture.employee_id}
+                    </span>
+                </div>
+                <div class="card-body p-2">
+                    <div class="employee-image-container mb-2">
+                        <img src="/employee_captures/${encodeURIComponent(capture.image_path)}" 
+                             class="employee-image" 
+                             alt="Employee ${capture.employee_id}"
+                             onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZGVlMmU2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNHB4IiBmaWxsPSIjNmM3NTdkIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkeT0iLjNlbSI+SW1hZ2UgTm90IEZvdW5kPC90ZXh0Pjwvc3ZnPg=='">
+                    </div>
+                    <div class="employee-info">
+                        <h6 class="mb-1">
+                            <i class="fas fa-user me-1"></i>
+                            Employee ${capture.employee_id}
+                        </h6>
+                        <div class="activity-tags">
+                            ${capture.activities.map(activity => 
+                                `<span class="badge bg-success me-1 mb-1">${activity}</span>`
+                            ).join('')}
+                        </div>
+                        <small class="text-muted">
+                            <i class="fas fa-map-marker-alt me-1"></i>
+                            ROI: ${capture.roi_info || 'Unknown'}
+                        </small>
+                    </div>
+                </div>
+            </div>`;
+        
+        capturesList.appendChild(col);
+    });
+}
+
+function updateStatistics(stats) {
+    totalEmployees.textContent = stats.total_employees || 0;
+    totalCaptures.textContent = stats.total_captures || 0;
+    // activeEmployees is updated in real-time during capture
+}
+
+function clearCaptureHistory() {
+    if (!confirm('Are you sure you want to clear all employee capture history? This action cannot be undone.')) {
+        return;
+    }
+    
+    fetch('/clear_employee_captures', {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadEmployeeCaptures();
+            // Reset statistics
+            totalEmployees.textContent = '0';
+            totalCaptures.textContent = '0';
+            activeEmployees.textContent = '0';
+        } else {
+            alert('Error clearing capture history: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error clearing capture history:', error);
+        alert('Error clearing capture history. Please try again.');
+    });
+}
+
+// Auto-refresh when page is visible
+document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && monitoringActive) {
+        loadEmployeeCaptures();
+    }
+});
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadEmployeeCaptures();
+});
+</script>
+
+<style>
+/* Statistics Cards */
+.stat-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: bold;
+    margin: 0;
+}
+
+/* Monitoring Status */
+.monitoring-status {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* Capture Cards */
+.capture-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.capture-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.employee-image-container {
+    width: 100%;
+    height: 200px;
+    overflow: hidden;
+    border-radius: 6px;
+    background: #f8f9fa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.employee-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 6px;
+}
+
+.employee-info h6 {
+    color: #495057;
+    font-weight: 600;
+}
+
+.activity-tags {
+    margin: 0.5rem 0;
+}
+
+.activity-tags .badge {
+    font-size: 0.75rem;
+}
+
+/* Control Panel */
+.card-title {
+    color: #495057;
+    font-weight: 600;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .monitoring-status {
+        justify-content: flex-start;
+        margin-top: 1rem;
+    }
+    
+    .stat-number {
+        font-size: 1.5rem;
+    }
+    
+    .employee-image-container {
+        height: 150px;
+    }
+}
+
+/* Animation for active monitoring */
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+.badge.bg-success {
+    animation: pulse 2s infinite;
+}
+
+/* Loading states */
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Card header styling */
+.capture-card .card-header {
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    padding: 0.5rem 1rem;
+}
+</style>
+{% endblock %}

@@ -78,6 +78,11 @@ def employees():
 def account():
     return render_template("account.html")
 
+@app.route("/employee_activity")
+@login_required
+def employee_activity():
+    return render_template("employee_activity.html")
+
 @app.route('/video_feed')
 def video_feed():
     def generate():
@@ -340,6 +345,39 @@ def delete_employee(id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 400
+
+@app.route('/capture_employee_activity', methods=['POST'])
+@login_required
+def capture_employee_activity():
+    try:
+        result = livefeed.capture_employee_activity()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/list_employee_captures')
+@login_required
+def list_employee_captures():
+    try:
+        result = livefeed.get_employee_captures()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/clear_employee_captures', methods=['DELETE'])
+@login_required
+def clear_employee_captures():
+    try:
+        result = livefeed.clear_employee_captures()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/employee_captures/<path:filename>')
+@login_required
+def serve_employee_capture(filename):
+    employee_act_dir = os.path.join(os.path.dirname(__file__), 'employee_act')
+    return send_from_directory(employee_act_dir, filename)
 
 if __name__ == "__main__":
     app.run(debug=True, host='127.0.0.1', port=5050)
