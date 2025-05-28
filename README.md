@@ -69,6 +69,6 @@ conda create -n myenv python=3.10.16
 ```
 ### REMINDER
 
-Read weigts folder and inside backend folder txtfile
+Read weights folder and inside backend folder txtfile
 
 ```sh
