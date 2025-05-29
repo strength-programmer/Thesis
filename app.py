@@ -7,6 +7,9 @@ import livefeed
 from functools import wraps
 from models import db, Employee
 from config import Config
+from werkzeug.security import check_password_hash, generate_password_hash
+import re
+import json
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -18,6 +21,53 @@ with app.app_context():
 
 # Start the background video thread when the app starts
 livefeed.start_background_video_thread()
+
+# User data file path
+USER_DATA_FILE = os.path.join(os.path.dirname(__file__), 'user_data.json')
+
+# Default user data
+DEFAULT_USER_DATA = {
+    'username': 'admin',
+    'email': 'admin@example.com',
+    'password': generate_password_hash('admin123'),  # Default password
+    'full_name': 'Administrator',
+    'phone': '09123456789',
+    'dob': datetime(1990, 1, 1).date().isoformat(),  # Store as ISO format string
+    'gender': 'male',
+    'bio': 'System Administrator'
+}
+
+def load_user_data():
+    """Load user data from JSON file or create with defaults if not exists"""
+    if os.path.exists(USER_DATA_FILE):
+        try:
+            with open(USER_DATA_FILE, 'r') as f:
+                data = json.load(f)
+                # Convert date string back to date object
+                data['dob'] = datetime.fromisoformat(data['dob']).date()
+                return data
+        except Exception as e:
+            print(f"Error loading user data: {e}")
+            return DEFAULT_USER_DATA
+    else:
+        # Save default data to file
+        save_user_data(DEFAULT_USER_DATA)
+        return DEFAULT_USER_DATA
+
+def save_user_data(data):
+    """Save user data to JSON file"""
+    try:
+        # Convert date to ISO format string for JSON serialization
+        data_to_save = data.copy()
+        data_to_save['dob'] = data['dob'].isoformat()
+        
+        with open(USER_DATA_FILE, 'w') as f:
+            json.dump(data_to_save, f, indent=4)
+    except Exception as e:
+        print(f"Error saving user data: {e}")
+
+# Load user data at startup
+USER_DATA = load_user_data()
 
 # Login required decorator
 def login_required(f):
@@ -34,9 +84,10 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
-        # Replace this with your actual user authentication logic
-        if username == "username" and password == "password":  # Example credentials
+        # Check against hardcoded credentials
+        if username == USER_DATA['username'] and check_password_hash(USER_DATA['password'], password):
             session['logged_in'] = True
+            session['username'] = USER_DATA['username']
             return redirect(url_for('home'))
         else:
             flash('Invalid username or password')
@@ -76,7 +127,7 @@ def employees():
 @app.route("/account")
 @login_required
 def account():
-    return render_template("account.html")
+    return render_template('account.html', user=USER_DATA)
 
 @app.route("/employee_activity")
 @login_required
@@ -378,6 +429,99 @@ def clear_employee_captures():
 def serve_employee_capture(filename):
     employee_act_dir = os.path.join(os.path.dirname(__file__), 'employee_act')
     return send_from_directory(employee_act_dir, filename)
+
+@app.route('/start_video_feed', methods=['POST'])
+@login_required
+def start_video_feed():
+    try:
+        livefeed.start_background_video_thread()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/stop_video_feed', methods=['POST'])
+@login_required
+def stop_video_feed():
+    try:
+        # The video feed will be stopped when the thread is terminated
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/update_profile', methods=['POST'])
+@login_required
+def update_profile():
+    # Update profile information
+    USER_DATA['full_name'] = request.form.get('fullName')
+    USER_DATA['phone'] = request.form.get('phone')
+    USER_DATA['dob'] = datetime.strptime(request.form.get('dob'), '%Y-%m-%d').date()
+    USER_DATA['gender'] = request.form.get('gender')
+    USER_DATA['bio'] = request.form.get('bio')
+    
+    # Validate phone number
+    if not re.match(r'^09\d{9}$', USER_DATA['phone']):
+        return jsonify({'error': 'Invalid phone number format'}), 400
+    
+    # Save changes to file
+    save_user_data(USER_DATA)
+    return jsonify({'message': 'Profile updated successfully'}), 200
+
+@app.route('/update_password', methods=['POST'])
+@login_required
+def update_password():
+    current_password = request.form.get('currentPassword')
+    new_password = request.form.get('newPassword')
+    confirm_password = request.form.get('confirmPassword')
+    
+    # Verify current password
+    if not check_password_hash(USER_DATA['password'], current_password):
+        return jsonify({'error': 'Current password is incorrect'}), 400
+    
+    # Verify new passwords match
+    if new_password != confirm_password:
+        return jsonify({'error': 'New passwords do not match'}), 400
+    
+    # Update password
+    USER_DATA['password'] = generate_password_hash(new_password)
+    
+    # Save changes to file
+    save_user_data(USER_DATA)
+    return jsonify({'message': 'Password updated successfully'}), 200
+
+@app.route('/update_username', methods=['POST'])
+@login_required
+def update_username():
+    new_username = request.form.get('newUsername')
+    current_password = request.form.get('usernamePassword')
+    
+    # Verify current password
+    if not check_password_hash(USER_DATA['password'], current_password):
+        return jsonify({'error': 'Current password is incorrect'}), 400
+    
+    # Update username
+    USER_DATA['username'] = new_username
+    session['username'] = new_username
+    
+    # Save changes to file
+    save_user_data(USER_DATA)
+    return jsonify({'message': 'Username updated successfully'}), 200
+
+@app.route('/update_email', methods=['POST'])
+@login_required
+def update_email():
+    new_email = request.form.get('newEmail')
+    current_password = request.form.get('emailPassword')
+    
+    # Verify current password
+    if not check_password_hash(USER_DATA['password'], current_password):
+        return jsonify({'error': 'Current password is incorrect'}), 400
+    
+    # Update email
+    USER_DATA['email'] = new_email
+    
+    # Save changes to file
+    save_user_data(USER_DATA)
+    return jsonify({'message': 'Email updated successfully'}), 200
 
 if __name__ == "__main__":
     app.run(debug=True, host='127.0.0.1', port=5050)

@@ -147,43 +147,81 @@ clearHistoryBtn.addEventListener('click', clearCaptureHistory);
 function startMonitoring() {
     if (monitoringActive) return;
     
-    monitoringActive = true;
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-    
-    // Update status
-    statusBadge.innerHTML = '<i class="fas fa-circle me-1"></i>Active';
-    statusBadge.className = 'badge bg-success';
-    
-    // Start capture cycle
-    startCaptureInterval();
-    
-    console.log('Employee monitoring started');
+    // Start video feed first
+    fetch('/start_video_feed', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            monitoringActive = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            
+            // Update status
+            statusBadge.innerHTML = '<i class="fas fa-circle me-1"></i>Active';
+            statusBadge.className = 'badge bg-success';
+            
+            // Start capture cycle
+            startCaptureInterval();
+            
+            console.log('Employee monitoring started');
+        } else {
+            console.error('Failed to start video feed:', data.error);
+            alert('Failed to start monitoring. Please try again.');
+        }
+    })
+    .catch(error => {
+        console.error('Error starting video feed:', error);
+        alert('Error starting monitoring. Please try again.');
+    });
 }
 
 function stopMonitoring() {
     if (!monitoringActive) return;
     
-    monitoringActive = false;
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    
-    // Update status
-    statusBadge.innerHTML = '<i class="fas fa-circle me-1"></i>Stopped';
-    statusBadge.className = 'badge bg-secondary';
-    
-    // Clear intervals
-    if (captureInterval) {
-        clearInterval(captureInterval);
-        captureInterval = null;
-    }
-    if (countdownInterval) {
-        clearInterval(countdownInterval);
-        countdownInterval = null;
-    }
-    
-    nextCaptureCountdown.textContent = '--';
-    console.log('Employee monitoring stopped');
+    // Stop video feed first
+    fetch('/stop_video_feed', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            monitoringActive = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            
+            // Update status
+            statusBadge.innerHTML = '<i class="fas fa-circle me-1"></i>Stopped';
+            statusBadge.className = 'badge bg-secondary';
+            
+            // Clear intervals
+            if (captureInterval) {
+                clearInterval(captureInterval);
+                captureInterval = null;
+            }
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+            
+            nextCaptureCountdown.textContent = '--';
+            console.log('Employee monitoring stopped');
+        } else {
+            console.error('Failed to stop video feed:', data.error);
+            alert('Failed to stop monitoring. Please try again.');
+        }
+    })
+    .catch(error => {
+        console.error('Error stopping video feed:', error);
+        alert('Error stopping monitoring. Please try again.');
+    });
 }
 
 function startCaptureInterval() {

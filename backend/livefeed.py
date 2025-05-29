@@ -784,8 +784,6 @@ def capture_employee_activity():
                     continue  # Skip if not in ROI
                 
                 # Check if person is in quadrants 2 or 3 (left side of frame)
-                # Quadrant 2: x < center_x, y < center_y (left upper)
-                # Quadrant 3: x < center_x, y > center_y (left lower)
                 if cx >= center_x:
                     continue  # Skip if in right quadrants (1 or 4)
                 
@@ -800,63 +798,92 @@ def capture_employee_activity():
                 if not detection_activities:
                     continue  # Skip if no activities detected
                 
-                # Ensure coordinates are within frame bounds
-                x1 = max(0, min(x1, w))
-                y1 = max(0, min(y1, h))
-                x2 = max(0, min(x2, w))
-                y2 = max(0, min(y2, h))
+                # Calculate the dimensions of the bounding box
+                box_width = x2 - x1
+                box_height = y2 - y1
                 
-                # Add a small margin around the person detection (5% of width/height)
-                margin_x = int((x2 - x1) * 0.05)
-                margin_y = int((y2 - y1) * 0.05)
+                # Add larger margins to ensure we capture the full person
+                # Use 15% margin for width and 25% for height to account for full body
+                margin_x = int(box_width * 0.15)
+                margin_y = int(box_height * 0.25)
                 
-                # Apply margin but keep within frame bounds
+                # Calculate crop coordinates with margins
                 crop_x1 = max(0, x1 - margin_x)
                 crop_y1 = max(0, y1 - margin_y)
                 crop_x2 = min(w, x2 + margin_x)
                 crop_y2 = min(h, y2 + margin_y)
                 
-                # Crop the employee from the frame - this extracts just the person within the bounding box
-                employee_crop = current_frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+                # Ensure minimum dimensions
+                min_width = 200
+                min_height = 400
                 
-                # Debug info
-                print(f"Cropping person at coordinates: x1={crop_x1}, y1={crop_y1}, x2={crop_x2}, y2={crop_y2}")
+                # Adjust crop dimensions if they're too small
+                if crop_x2 - crop_x1 < min_width:
+                    center_x_crop = (crop_x1 + crop_x2) // 2
+                    crop_x1 = max(0, center_x_crop - min_width // 2)
+                    crop_x2 = min(w, center_x_crop + min_width // 2)
                 
-                if employee_crop.size == 0:
-                    print(f"Warning: Empty crop detected for employee {i+1}")
+                if crop_y2 - crop_y1 < min_height:
+                    center_y_crop = (crop_y1 + crop_y2) // 2
+                    crop_y1 = max(0, center_y_crop - min_height // 2)
+                    crop_y2 = min(h, center_y_crop + min_height // 2)
+                
+                # Ensure we have a valid crop area
+                if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
+                    print(f"Invalid crop dimensions for detection {i}: x1={crop_x1}, y1={crop_y1}, x2={crop_x2}, y2={crop_y2}")
                     continue
                 
-                # Create timestamped folder if this is the first valid capture
-                if timestamp_folder is None:
-                    timestamp_folder = os.path.join(employee_act_dir, timestamp_str)
-                    if not os.path.exists(timestamp_folder):
-                        os.makedirs(timestamp_folder)
-                
-                # Generate employee ID and filename
-                employee_id = f"EMP_{i+1:03d}"
-                filename = f"employee_{employee_id}_{timestamp_str}.jpg"
-                filepath = os.path.join(timestamp_folder, filename)
-                
-                # Save the cropped image
-                cv2.imwrite(filepath, employee_crop)
-                
-                # Determine quadrant for ROI info
-                quadrant = 2 if cy < center_y else 3
-                roi_info = f"ROI Quadrant {quadrant}"
-                
-                # Create capture record
-                capture_data = {
-                    "employee_id": employee_id,
-                    "timestamp": timestamp.isoformat(),
-                    "image_path": f"{timestamp_str}/{filename}",  # Use forward slash for web URLs
-                    "activities": detection_activities,
-                    "confidence": confidence,
-                    "bounding_box": [x1, y1, x2, y2],
-                    "roi_info": roi_info
-                }
-                
-                captured_employees.append(capture_data)
-                employee_captures.append(capture_data)
+                # Crop the employee from the frame
+                try:
+                    employee_crop = current_frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+                    
+                    if employee_crop.size == 0:
+                        print(f"Warning: Empty crop detected for employee {i+1}")
+                        continue
+                    
+                    # Create timestamped folder if this is the first valid capture
+                    if timestamp_folder is None:
+                        timestamp_folder = os.path.join(employee_act_dir, timestamp_str)
+                        if not os.path.exists(timestamp_folder):
+                            os.makedirs(timestamp_folder)
+                    
+                    # Generate employee ID and filename
+                    employee_id = f"EMP_{i+1:03d}"
+                    filename = f"employee_{employee_id}_{timestamp_str}.jpg"
+                    filepath = os.path.join(timestamp_folder, filename)
+                    
+                    # Save the cropped image with high quality
+                    cv2.imwrite(filepath, employee_crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    
+                    # Determine quadrant for ROI info
+                    quadrant = 2 if cy < center_y else 3
+                    roi_info = f"ROI Quadrant {quadrant}"
+                    
+                    # Create capture record
+                    capture_data = {
+                        "employee_id": employee_id,
+                        "timestamp": timestamp.isoformat(),
+                        "image_path": f"{timestamp_str}/{filename}",
+                        "activities": detection_activities,
+                        "confidence": confidence,
+                        "bounding_box": [x1, y1, x2, y2],
+                        "roi_info": roi_info,
+                        "crop_dimensions": {
+                            "x1": crop_x1,
+                            "y1": crop_y1,
+                            "x2": crop_x2,
+                            "y2": crop_y2,
+                            "width": crop_x2 - crop_x1,
+                            "height": crop_y2 - crop_y1
+                        }
+                    }
+                    
+                    captured_employees.append(capture_data)
+                    employee_captures.append(capture_data)
+                    
+                except Exception as crop_error:
+                    print(f"Error cropping detection {i}: {crop_error}")
+                    continue
                 
             except Exception as e:
                 print(f"Error processing detection {i}: {e}")

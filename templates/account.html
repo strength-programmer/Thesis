@@ -1,10 +1,287 @@
 {% extends "base.html" %}
 
-{% block title %}
-Account Settings
-{% endblock %}
+{% block title %}Account Settings{% endblock %}
 
 {% block content %}
-<h1>Account Settings</h1>
-<p>Configure your account settings and preferences here.</p>
+<div class="account-container">
+    <h1>Account Settings</h1>
+    
+    <!-- Profile Information Card -->
+    <div class="account-card">
+        <h2>Profile Information</h2>
+        <form id="profileForm" class="account-form">
+            <div class="form-group">
+                <label for="fullName">Full Name</label>
+                <input type="text" id="fullName" name="fullName" value="{{ user.full_name }}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="username">Username</label>
+                <div class="input-group">
+                    <input type="text" id="username" name="username" value="{{ user.username }}" readonly>
+                    <button type="button" class="edit-btn" onclick="enableEdit('username')">Edit</button>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="email">Email</label>
+                <div class="input-group">
+                    <input type="email" id="email" name="email" value="{{ user.email }}" readonly>
+                    <button type="button" class="edit-btn" onclick="enableEdit('email')">Edit</button>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="phone">Phone Number</label>
+                <input type="tel" id="phone" name="phone" value="{{ user.phone }}" pattern="[0-9]{11}" required>
+                <small class="form-text">Format: 09XXXXXXXXX</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="dob">Date of Birth</label>
+                <input type="date" id="dob" name="dob" value="{{ user.dob }}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="gender">Gender</label>
+                <select id="gender" name="gender" required>
+                    <option value="">Select Gender</option>
+                    <option value="male" {% if user.gender == 'male' %}selected{% endif %}>Male</option>
+                    <option value="female" {% if user.gender == 'female' %}selected{% endif %}>Female</option>
+                    <option value="other" {% if user.gender == 'other' %}selected{% endif %}>Other</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="bio">Bio/About Me</label>
+                <textarea id="bio" name="bio" rows="4">{{ user.bio }}</textarea>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="save-btn">Save Changes</button>
+            </div>
+        </form>
+    </div>
+    
+    <!-- Password Change Card -->
+    <div class="account-card">
+        <h2>Change Password</h2>
+        <button type="button" class="edit-btn" onclick="showPasswordModal()">Change Password</button>
+    </div>
+</div>
+
+<!-- Password Change Modal -->
+<div id="passwordModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closePasswordModal()">&times;</span>
+        <h2>Change Password</h2>
+        <form id="passwordForm" class="account-form">
+            <div class="form-group">
+                <label for="currentPassword">Current Password</label>
+                <input type="password" id="currentPassword" name="currentPassword" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="newPassword">New Password</label>
+                <input type="password" id="newPassword" name="newPassword" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="confirmPassword">Confirm New Password</label>
+                <input type="password" id="confirmPassword" name="confirmPassword" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="save-btn">Update Password</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Username Change Modal -->
+<div id="usernameModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeUsernameModal()">&times;</span>
+        <h2>Change Username</h2>
+        <form id="usernameForm" class="account-form">
+            <div class="form-group">
+                <label for="newUsername">New Username</label>
+                <input type="text" id="newUsername" name="newUsername" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="usernamePassword">Current Password</label>
+                <input type="password" id="usernamePassword" name="usernamePassword" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="save-btn">Update Username</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Email Change Modal -->
+<div id="emailModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeEmailModal()">&times;</span>
+        <h2>Change Email</h2>
+        <form id="emailForm" class="account-form">
+            <div class="form-group">
+                <label for="newEmail">New Email</label>
+                <input type="email" id="newEmail" name="newEmail" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="emailPassword">Current Password</label>
+                <input type="password" id="emailPassword" name="emailPassword" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="submit" class="save-btn">Update Email</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Modal functionality
+function showPasswordModal() {
+    document.getElementById('passwordModal').style.display = 'block';
+}
+
+function closePasswordModal() {
+    document.getElementById('passwordModal').style.display = 'none';
+}
+
+function showUsernameModal() {
+    document.getElementById('usernameModal').style.display = 'block';
+}
+
+function closeUsernameModal() {
+    document.getElementById('usernameModal').style.display = 'none';
+}
+
+function showEmailModal() {
+    document.getElementById('emailModal').style.display = 'block';
+}
+
+function closeEmailModal() {
+    document.getElementById('emailModal').style.display = 'none';
+}
+
+// Edit button functionality
+function enableEdit(field) {
+    switch(field) {
+        case 'username':
+            showUsernameModal();
+            break;
+        case 'email':
+            showEmailModal();
+            break;
+    }
+}
+
+// Form submissions
+document.getElementById('profileForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    
+    try {
+        const response = await fetch('/update_profile', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            alert('Profile updated successfully!');
+        } else {
+            alert('Failed to update profile. Please try again.');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    }
+});
+
+document.getElementById('passwordForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    
+    if (formData.get('newPassword') !== formData.get('confirmPassword')) {
+        alert('New passwords do not match!');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/update_password', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            alert('Password updated successfully!');
+            closePasswordModal();
+        } else {
+            alert('Failed to update password. Please check your current password.');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    }
+});
+
+document.getElementById('usernameForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    
+    try {
+        const response = await fetch('/update_username', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            alert('Username updated successfully!');
+            closeUsernameModal();
+            location.reload();
+        } else {
+            alert('Failed to update username. Please check your password.');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    }
+});
+
+document.getElementById('emailForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    
+    try {
+        const response = await fetch('/update_email', {
+            method: 'POST',
+            body: formData
+        });
+        
+        if (response.ok) {
+            alert('Email updated successfully!');
+            closeEmailModal();
+            location.reload();
+        } else {
+            alert('Failed to update email. Please check your password.');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('An error occurred. Please try again.');
+    }
+});
+
+// Close modals when clicking outside
+window.onclick = function(event) {
+    if (event.target.className === 'modal') {
+        event.target.style.display = 'none';
+    }
+}
+</script>
 {% endblock %}
